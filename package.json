@@ -1,6 +1,6 @@
 {
   "name": "dsh-github-copilot-accounts",
-  "version": "0.1.1-dsh-0.1.7-rc.2",
+  "version": "0.1.2-dsh-0.1.7-rc.2",
   "description": "GitHub Copilot 多账号管理：设备码登录（支持 github.com 与 GHE 企业版）、多账号一键切换、额度与 Token 用量展示。",
   "type": "module",
   "license": "MIT",

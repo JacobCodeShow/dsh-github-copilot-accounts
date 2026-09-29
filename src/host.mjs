@@ -261,7 +261,11 @@ const COPILOT_HEADERS = {
 const USAGE_TTL_MS = 5 * 60 * 1000;
 
 // 刷新短期 Copilot token（与 pi-ai refreshGitHubCopilotAccessToken 同一端点
-// 同一换算），并回写槽位/主 key 的 access/expires。refresh token 本身不变。
+// 同一换算），并回写主 key + 对应槽位的 access/expires。refresh token 本身不变。
+// 为什么需要插件主动刷新：GitHub copilot_internal/v2/token 返回的 expires_at
+// 是较长的有效期（8h+），但 access token 实际远早于此失效（实测 RefreshIn≈1500s）。
+// pi-ai 按 expires_at 判断不刷新，导致显示还有效但请求 401。插件按 refresh_in
+// 主动刷新，保证 access 始终新鲜。
 async function persistRefresh(ctx, key, payload, domain) {
   const res = await fetch(`${apiBase(domain)}/copilot_internal/v2/token`, {
     headers: { accept: "application/json", authorization: `Bearer ${payload.refresh}`, ...COPILOT_HEADERS },
@@ -274,11 +278,25 @@ async function persistRefresh(ctx, key, payload, domain) {
   }
   const access = data.token;
   const expires = data.expires_at * 1000 - 5 * 60 * 1000;
+  // refresh_in 秒：GitHub 推荐的下次刷新间隔；缺省回退 25 分钟。
+  const refreshIn = typeof data?.refresh_in === "number" ? data.refresh_in : 1500;
+  // 回写主 key
   await ctx.credentials.modifyRecord(key, (current) =>
     isGrant(current)
       ? { kind: "grant", payload: { ...current.payload, access, expires } }
       : undefined);
-  return { access, expires };
+  // 同步回写槽位（按 refresh token 匹配），避免切换账号时把旧 access 写回主 key。
+  try {
+    const slots = await listAccountSlots(ctx);
+    const slot = slots.find((s) => s.payload.refresh === payload.refresh);
+    if (slot) {
+      await ctx.credentials.modifyRecord(slot.key, (current) =>
+        isGrant(current)
+          ? { kind: "grant", payload: { ...current.payload, access, expires } }
+          : undefined);
+    }
+  } catch { /* 槽位回写失败不影响主 key 已生效 */ }
+  return { access, expires, refreshIn };
 }
 
 const PLAN_LABELS = {
@@ -442,7 +460,34 @@ export function apply(ctx) {
       ctx.logger?.warn?.("copilot-auth: account slot persist failed: %s", String(err?.message ?? err));
     }
     void sync();
+    // 新登录拿到 fresh token，重置刷新计时器。
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshActive, 25 * 60 * 1000);
   };
+
+  // 主动刷新当前激活账号的 access token。
+  // pi-ai 仅在 expires 到期时刷新，但 GitHub 的 expires_at 偏长、access 实际早失效。
+  // 这里按 refresh_in（默认 25min）周期刷新，保证 pi-ai 读到的 access 始终有效。
+  let refreshTimer = null;
+  const refreshActive = async () => {
+    try {
+      const main = await ctx.credentials.readRecord(CREDENTIAL_KEY);
+      if (!isGrant(main) || typeof main.payload.refresh !== "string") return;
+      const domain = normalizeDomain(main.payload.enterpriseUrl) ?? "github.com";
+      const { refreshIn } = await persistRefresh(ctx, CREDENTIAL_KEY, main.payload, domain);
+      // 按 GitHub 推荐间隔排下次刷新；最少 5 分钟，最多 60 分钟。
+      const nextMs = Math.min(60 * 60 * 1000, Math.max(5 * 60 * 1000, refreshIn * 1000));
+      ctx.logger?.info?.("copilot-auth: access token refreshed, next in %ds", Math.round(nextMs / 1000));
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(refreshActive, nextMs);
+    } catch (err) {
+      ctx.logger?.warn?.("copilot-auth: token refresh failed, retry in 5min: %s", String(err?.message ?? err));
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(refreshActive, 5 * 60 * 1000);
+    }
+  };
+  // 启动延迟刷新（登录时 pi-ai 已拿到 fresh token，不必立刻刷）。
+  refreshTimer = setTimeout(refreshActive, 25 * 60 * 1000);
 
   ctx.webServer.register({
     kind: "exact",
@@ -633,13 +678,15 @@ export function apply(ctx) {
         return;
       }
       try {
-        // 激活 = 槽位 payload 原子写入主 key；pi-ai 请求路径即读到新账号，
-        // 其自动刷新也只改主 key（refresh 字段不变，槽位不受影响）。
+        // 激活 = 槽位 payload 原子写入主 key；pi-ai 请求路径即读到新账号。
         await ctx.credentials.modifyRecord(CREDENTIAL_KEY, () => ({ kind: "grant", payload: slot.payload }));
       } catch (err) {
         json(res, 500, { ok: false, error: String(err?.message ?? err) });
         return;
       }
+      // 切换后立即刷新 access token（槽位里的 access 可能已过期），
+      // 并重置周期刷新计时器。fire-and-forget，不阻塞激活响应。
+      void refreshActive();
       void sync();
       json(res, 200, { ok: true });
     },
@@ -815,6 +862,21 @@ export function apply(ctx) {
         });
       } catch {
         json(res, 200, { configured: false });
+      }
+    },
+  });
+
+  // 手动刷新 access token：用于 token 实际已失效但 expires 未到期时强制刷新。
+  ctx.webServer.register({
+    kind: "exact",
+    path: r.refresh,
+    handler: async (req, res) => {
+      if (!guard(req, res, "POST")) return;
+      try {
+        await refreshActive();
+        json(res, 200, { ok: true });
+      } catch (err) {
+        json(res, 500, { ok: false, error: String(err?.message ?? err) });
       }
     },
   });

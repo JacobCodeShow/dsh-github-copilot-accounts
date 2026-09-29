@@ -19,6 +19,7 @@ export const routes = () => ({
   cancel: `${ROUTE_PREFIX}/cancel`,
   open: `${ROUTE_PREFIX}/open`,
   whoami: `${ROUTE_PREFIX}/whoami`,
+  refresh: `${ROUTE_PREFIX}/refresh`,
 });
 
 export const emptyState = () => ({

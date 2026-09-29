@@ -112,8 +112,8 @@ test("插件身份与路由注册", (t) => {
   assert.ok(ctx.routes.every((r) => r.kind === "exact"), "所有路由必须都是 exact");
   assert.deepEqual(ctx.routes.map((r) => r.path).sort(),
     ["/copilot-auth/accounts", "/copilot-auth/activate", "/copilot-auth/cancel", "/copilot-auth/debug",
-      "/copilot-auth/logout", "/copilot-auth/open", "/copilot-auth/start", "/copilot-auth/state",
-      "/copilot-auth/whoami"]);
+      "/copilot-auth/logout", "/copilot-auth/open", "/copilot-auth/refresh", "/copilot-auth/start",
+      "/copilot-auth/state", "/copilot-auth/whoami"]);
 });
 
 test("start/github.com：begin key/method 正确，Enterprise 提问答空串", async (t) => {
