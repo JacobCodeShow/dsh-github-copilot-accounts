@@ -33,14 +33,17 @@ jobs:
           npm --version
 
       - name: Check version not already published
+        id: check
         run: |
           PKG_VERSION=$(node -p "require('./package.json').version")
           PKG_NAME=$(node -p "require('./package.json').name")
           if npm view "$PKG_NAME@$PKG_VERSION" version >/dev/null 2>&1; then
-            echo "::error::$PKG_NAME@$PKG_VERSION already published. Bump version first."
-            exit 1
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$PKG_NAME@$PKG_VERSION already published (e.g. manual bootstrap); skipping publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Publishing $PKG_NAME@$PKG_VERSION"
           fi
-          echo "Publishing $PKG_NAME@$PKG_VERSION"
 
       - name: Build and test
         run: |
@@ -49,6 +52,7 @@ jobs:
 
       # npm detects the GitHub OIDC environment and creates a short-lived publish credential.
       - name: Publish
+        if: steps.check.outputs.exists != 'true'
         run: npm publish --access public
 
 # Configure this exact publisher in npm package settings:

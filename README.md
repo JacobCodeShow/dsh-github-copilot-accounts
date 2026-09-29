@@ -115,6 +115,21 @@ npm pack --dry-run
 | `scripts/build-client.mjs` | client 打包（`__ModuleLoader__` CJS 工厂信封） |
 | `lib/client.js` | 构建产物（入库，使 git 安装免构建） |
 
+## 版本号规则
+
+版本号采用 semver 预发布后缀同时表达「插件自身版本」与「实测适配的 DSH 版本」：
+
+```
+<插件核心版本>-dsh-<实测适配的 DSH 版本>
+   0.1.1            0.1.7-rc.2
+```
+
+- 例：`0.1.1-dsh-0.1.7-rc.2` 表示插件 0.1.1，实测适配 DSH desktop `0.1.7-rc.2`（即当前最低支持版本）；
+- **插件功能发版**：bump 核心号（patch/minor），后缀保持当前适配的 DSH 版本；
+- **DSH 升级后重新实测适配**：bump 核心号并替换后缀，如 `0.2.0-dsh-0.1.8`；
+- git tag 与之一致但带 `v` 前缀：`v0.1.1-dsh-0.1.7-rc.2`；
+- 后缀版本号仍是合法 semver 预发布标识（每段仅含字母数字与连字符）。npm 默认把 `latest` dist-tag 指向最新发布，`dsh plugin add dsh-github-copilot-accounts` 按 dist-tag 安装，正常获取该版本；仅 `^x.y.z` 形式的版本范围不会匹配预发布号，这不影响插件安装方式。
+
 ## 维护者发布
 
 本项目使用 npm **Trusted Publishing（GitHub Actions OIDC）** 发布，不在仓库或 GitHub Secrets 中保存 `NPM_TOKEN`。
