@@ -128,7 +128,7 @@ npm pack --dry-run
 - **插件功能发版**：bump 核心号（patch/minor），后缀保持当前适配的 DSH 版本；
 - **DSH 升级后重新实测适配**：bump 核心号并替换后缀，如 `0.2.0-dsh-0.1.8`；
 - git tag 与之一致但带 `v` 前缀：`v0.1.1-dsh-0.1.7-rc.2`；
-- 后缀版本号仍是合法 semver 预发布标识（每段仅含字母数字与连字符）。npm 默认把 `latest` dist-tag 指向最新发布，`dsh plugin add dsh-github-copilot-accounts` 按 dist-tag 安装，正常获取该版本；仅 `^x.y.z` 形式的版本范围不会匹配预发布号，这不影响插件安装方式。
+- 后缀版本号仍是合法 semver 预发布标识（每段仅含字母数字与连字符）。注意 npm 对预发布版本**要求显式 `--tag`**（CI 的 release.yml 与手工发布均带 `--tag latest`），显式挂到 `latest` 后 `dsh plugin add dsh-github-copilot-accounts` 按 dist-tag 安装即可正常获取该版本；仅 `^x.y.z` 形式的版本范围不会匹配预发布号，这不影响插件安装方式。
 
 ## 维护者发布
 

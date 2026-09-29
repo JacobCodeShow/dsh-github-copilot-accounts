@@ -51,9 +51,10 @@ jobs:
           npm test
 
       # npm detects the GitHub OIDC environment and creates a short-lived publish credential.
+      # 预发布版本号（含 - 后缀）必须显式 --tag，显式挂到 latest 使默认安装拿到该版。
       - name: Publish
         if: steps.check.outputs.exists != 'true'
-        run: npm publish --access public
+        run: npm publish --access public --tag latest
 
 # Configure this exact publisher in npm package settings:
 # GitHub Actions / <owner> / <repo> / release.yml / no environment.
