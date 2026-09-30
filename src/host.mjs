@@ -7,7 +7,7 @@
 //     key；pi-ai 请求路径只读主 key）；
 //   - 用量展示（copilot_internal/user，access 过期/401 先刷新一次）。
 // 登录成功/激活后把账号可用模型兜底填充为该路由的模型目录（目录保护不变）。
-// 不提供模型目录手动刷新：桌面版（0.1.7-rc.2）pi-ai 目录位于只读 app.asar 内，
+// 不提供模型目录手动刷新：桌面版（0.2.0-rc.1）pi-ai 目录位于只读 app.asar 内，
 // 数据级目录补丁无法写入；上游新模型随 DSH 升级获得。
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -461,14 +461,20 @@ export function apply(ctx) {
     }
     void sync();
     // 新登录拿到 fresh token，重置刷新计时器。
-    if (refreshTimer) clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(refreshActive, 25 * 60 * 1000);
+    scheduleRefresh(25 * 60 * 1000);
   };
 
   // 主动刷新当前激活账号的 access token。
   // pi-ai 仅在 expires 到期时刷新，但 GitHub 的 expires_at 偏长、access 实际早失效。
   // 这里按 refresh_in（默认 25min）周期刷新，保证 pi-ai 读到的 access 始终有效。
   let refreshTimer = null;
+  // 统一排下一次刷新。unref() 让定时器不保活事件循环——node --test / CLI
+  // 场景进程跑完即退；DSH 宿主常驻且有其他句柄，定时器照常触发。
+  const scheduleRefresh = (delayMs) => {
+    if (refreshTimer) clearTimeout(refreshTimer);
+    refreshTimer = setTimeout(refreshActive, delayMs);
+    refreshTimer.unref?.();
+  };
   const refreshActive = async () => {
     try {
       const main = await ctx.credentials.readRecord(CREDENTIAL_KEY);
@@ -478,16 +484,14 @@ export function apply(ctx) {
       // 按 GitHub 推荐间隔排下次刷新；最少 5 分钟，最多 60 分钟。
       const nextMs = Math.min(60 * 60 * 1000, Math.max(5 * 60 * 1000, refreshIn * 1000));
       ctx.logger?.info?.("copilot-auth: access token refreshed, next in %ds", Math.round(nextMs / 1000));
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(refreshActive, nextMs);
+      scheduleRefresh(nextMs);
     } catch (err) {
       ctx.logger?.warn?.("copilot-auth: token refresh failed, retry in 5min: %s", String(err?.message ?? err));
-      if (refreshTimer) clearTimeout(refreshTimer);
-      refreshTimer = setTimeout(refreshActive, 5 * 60 * 1000);
+      scheduleRefresh(5 * 60 * 1000);
     }
   };
   // 启动延迟刷新（登录时 pi-ai 已拿到 fresh token，不必立刻刷）。
-  refreshTimer = setTimeout(refreshActive, 25 * 60 * 1000);
+  scheduleRefresh(25 * 60 * 1000);
 
   ctx.webServer.register({
     kind: "exact",
@@ -841,7 +845,8 @@ export function apply(ctx) {
               plan = u.value.plan ?? null;
               const usage = u.value.usage;
               if (usage && typeof usage.percentUsed === "number") {
-                usagePercent = usage.percentUsed;
+                // 取整避免浮点误差（上游 69.200000...% 直接透传会显示长串小数）。
+                usagePercent = Math.round(usage.percentUsed);
               }
               if (usage && typeof usage.resets === "string") {
                 usageResetDate = usage.resets;

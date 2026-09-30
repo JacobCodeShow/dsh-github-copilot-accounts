@@ -1,4 +1,4 @@
-# DSH 0.1.7-rc.2 适配（2026-09-25）：
+# DSH 0.1.7-rc.2 适配（2026-09-25）；0.2.0-rc.1 实测可用（2026-09-29）：
 # 0.1.7 内置组合已挂载 authorization 服务（dsh-base 0.1.7-rc.2 依赖
 # @deepseek-ai/dsh-authorization；dsh-llm-pi-ai 挂载时无条件为每个
 # catalog provider 注册 llm-pi-ai/<provider> 授权 flow），无需再挂

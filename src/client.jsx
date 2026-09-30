@@ -8,6 +8,7 @@
 // MutationObserver 把本节导航行的齿轮替换为单色 Copilot 图标
 // （octicons copilot-16，fill=currentColor，浅/深主题自动一致）。
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export const name = "copilot-auth-ui";
 export const inject = ["slots", "locale"];
@@ -845,17 +846,6 @@ function CopilotSection({ t = (key) => DICTS.en[key] ?? key }) {
   );
 }
 
-// 工作区输入栏下方 Copilot 徽标（VSCode 风格）：显示 Copilot logo，
-// 点击弹出账号信息面板（用户名/token剩余/plan/切换账号）。
-function formatRemaining(seconds) {
-  if (seconds === null || seconds === undefined) return "";
-  if (seconds <= 0) return "expired";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h${m}m`;
-  return `${m}m`;
-}
-
 // 简化版 Copilot 图标（16x16，currentColor）
 const BADGE_COPILOT_SVG =
   '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="flex:none">' +
@@ -1004,6 +994,7 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
   const [open, setOpen] = useState(false);
   const [switching, setSwitching] = useState(null);
   const timer = useRef(null);
+  const badgeRef = useRef(null);
 
   const refresh = () => {
     fetch("/copilot-auth/whoami").then((r) => r.json()).then((d) => setWhoami(d)).catch(() => {});
@@ -1031,14 +1022,12 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
     setSwitching(null);
   };
 
-  const remaining = whoami?.remaining;
-  const remainingText = formatRemaining(remaining);
-  const lowToken = remaining !== null && remaining !== undefined && remaining < 300;
   const badgeOpacity = whoami?.configured ? 1 : 0.5;
   // 剩余额度 = 100 - 已用百分比（进度条 >80% 变红，对应剩余 <20%）。
+  // Math.round 消除浮点误差（100 - 69.2 = 30.799999...）。
   const used = whoami?.usagePercent;
   const quotaRemaining = typeof used === "number"
-    ? Math.max(0, Math.min(100, 100 - used)) : null;
+    ? Math.round(Math.max(0, Math.min(100, 100 - used))) : null;
   const lowQuota = quotaRemaining !== null && quotaRemaining < 20;
 
   if (!whoami) {
@@ -1063,30 +1052,36 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
   const badgeTitle = [
     whoami.login,
     quotaRemaining !== null && `${t("badgeQuotaRemaining")} ${quotaRemaining}%`,
-    remainingText,
   ].filter(Boolean).join(" · ") || undefined;
 
+  // 弹窗用 position: fixed 渲染到根堆叠上下文，避免被侧边栏（Files 面板）
+  // 等高层级 DOM 盖住。坐标从徽标 getBoundingClientRect 实时计算。
+  const badgeRect = badgeRef.current?.getBoundingClientRect();
+  const popupStyle = badgeRect ? {
+    position: "fixed",
+    left: badgeRect.left,
+    bottom: window.innerHeight - badgeRect.top + 4,
+    background: "var(--dsh-bg, #fff)", border: "1px solid rgba(128,128,128,0.3)",
+    borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+    padding: 0, minWidth: 280, maxWidth: 320, zIndex: 100001,
+    overflow: "hidden",
+  } : null;
+
   return (
-    <div style={{ position: "relative", flex: "none" }}>
+    <div style={{ position: "relative", flex: "none" }} ref={badgeRef}>
       <span className="copilot-badge" title={badgeTitle} onClick={() => setOpen((v) => !v)}>
         <span dangerouslySetInnerHTML={{ __html: BADGE_COPILOT_SVG }} />
-        {/* logo 后只显示剩余额度百分比；token 剩余时间移到弹窗身份行右侧 */}
+        {/* logo 后只显示剩余额度百分比 */}
         {quotaRemaining !== null && (
           <span className="copilot-badge-label" style={lowQuota ? { color: "#e03131" } : undefined}>
             {quotaRemaining}%
           </span>
         )}
       </span>
-      {open && (
+      {open && createPortal(
         <>
-          <div style={{ position: "fixed", inset: 0, zIndex: 998 }} onClick={() => setOpen(false)} />
-          <div style={{
-            position: "absolute", bottom: "100%", left: 0, marginBottom: 4,
-            background: "var(--dsh-bg, #fff)", border: "1px solid rgba(128,128,128,0.3)",
-            borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-            padding: 0, minWidth: 280, maxWidth: 320, zIndex: 999,
-            overflow: "hidden",
-          }}>
+          <div style={{ position: "fixed", inset: 0, zIndex: 100000 }} onClick={() => setOpen(false)} />
+          <div style={popupStyle}>
             {/* 标题栏：Plan 名称 + 设置按钮 */}
             <div style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
@@ -1134,7 +1129,7 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
                 </div>
               </div>
             )}
-            {/* 身份行：左侧当前账号头像 + 用户名，右侧 token 剩余时间。
+            {/* 身份行：当前账号头像 + 用户名。
                 排版与下方账号切换列表行一致（18px 圆头像、13px 文字、gap 8）。 */}
             <div style={{
               display: "flex", alignItems: "center", gap: 8,
@@ -1149,14 +1144,6 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
               }}>
                 {whoami.login ?? "—"}
               </span>
-              {remainingText && (
-                <span style={{
-                  flex: "none", fontSize: 12, fontVariantNumeric: "tabular-nums",
-                  color: lowToken ? "#e03131" : "inherit", opacity: lowToken ? 1 : 0.7,
-                }}>
-                  {remainingText}
-                </span>
-              )}
             </div>
             {/* 账号切换区 */}
             {accounts && accounts.length > 1 && (
@@ -1185,8 +1172,7 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
               </div>
             )}
           </div>
-        </>
-      )}
+        </>, document.body)}
     </div>
   );
 }
@@ -1241,7 +1227,7 @@ export function apply(ctx) {
     CopilotSection,
   ));
   // 工作区输入栏下方 Copilot 徽标（VSCode 风格）：显示 Copilot logo，
-  // 点击弹出账号信息面板（用户名/token剩余/plan/切换账号）。
+  // 点击弹出账号信息面板（用户名/plan/用量/切换账号）。
   ctx.slots.inject("conversation.composer.dock", () => ctx.slots.register(
     { name: "conversation.composer.dock", id: "copilot-badge", order: 50, inject: () => ({ t }) },
     CopilotBadge,

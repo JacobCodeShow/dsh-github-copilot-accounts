@@ -1,7 +1,7 @@
 // 把 src/client.jsx 打包为浏览器侧 __ModuleLoader__ CJS 工厂信封。
 // 信封结构与 $PKG/dsh-client-ui-settings-models/lib/client.js 首部（L1-8）对齐：
 //   window.__ModuleLoader__.load({ id, factory: (require) => { … return module.exports } });
-// react / react/jsx-runtime 为 external——由宿主 web roster 的模块图提供。
+// react / react/jsx-runtime / react-dom 为 external——由宿主 web roster 的模块图提供。
 import { writeFile, mkdir } from "node:fs/promises";
 import esbuild from "esbuild";
 
@@ -14,7 +14,7 @@ const result = await esbuild.build({
   // React.createElement，而组件未导入默认 React；automatic 产出
   // require("react/jsx-runtime")，与 external 列表匹配。
   jsx: "automatic",
-  external: ["react", "react/jsx-runtime"],
+  external: ["react", "react/jsx-runtime", "react-dom"],
   write: false,
   minify: false,
 });
