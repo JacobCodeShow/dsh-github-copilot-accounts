@@ -1158,6 +1158,7 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
               <div style={{ borderTop: "1px solid rgba(128,128,128,0.15)", padding: "4px 0" }}>
                 {accounts.map((acc) => {
                   const active = acc.active;
+                  const label = `${acc.domain}/${acc.login ?? acc.name ?? t("legacyAccount")}`;
                   return (
                     <button key={acc.id} type="button"
                       style={{
@@ -1171,13 +1172,8 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
                       onClick={() => switchAccount(acc.id)}
                     >
                       <AccountAvatar url={acc.avatarUrl} login={acc.login} size={18} />
-                      <span style={{ minWidth: 0, flex: 1, display: "flex", flexDirection: "column", gap: 2 }}>
-                        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {acc.login ?? acc.name ?? t("legacyAccount")}
-                        </span>
-                        <span style={{ fontSize: 11, opacity: 0.65, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                          {acc.domain}
-                        </span>
+                      <span title={label} style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {label}
                       </span>
                       {active && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>✓</span>}
                       {switching === acc.id && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>{t("badgeSwitching")}</span>}

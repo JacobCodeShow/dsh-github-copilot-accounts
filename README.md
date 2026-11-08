@@ -11,7 +11,7 @@
 ## 特性
 
 - 🔐 **设备码登录/注销**：网页 + user code，免 API Token；SSO 组织授权友好
-- 👥 **多账号管理**：「添加账号」下拉支持 GitHub.com 与 GitHub Enterprise Cloud（输入 `company.ghe.com` 域名）两种入口；不同域名下的同名账号可独立并存，**Default 徽标**标记当前激活账号，… 菜单一键切换/注销；对话中的账号切换列表显示域名以区分同名账号
+- 👥 **多账号管理**：「添加账号」下拉支持 GitHub.com 与 GitHub Enterprise Cloud（输入 `company.ghe.com` 域名）两种入口；不同域名下的同名账号可独立并存，**Default 徽标**标记当前激活账号，… 菜单一键切换/注销；对话中的账号切换列表以单行 `domain/username` 显示账号（如 `github.com/alice`、`corpb.ghe.com/alice`），区分同名账号；过长标签省略显示，悬停可见完整内容
 - 📊 **用量展示**：每张账号卡显示套餐（Plan）与 AI credits 进度条（月度重置），数据来自 `copilot_internal/user`
 - 🧩 **预置提供方路由**：安装即出现在 Models 页，无需手动配置
 - 📦 **模型目录兜底填充**：登录成功/切换账号时，若 GitHub Copilot 路由还没有模型目录，自动填入账号可用模型（∩ 内置目录）；你已精简/定制过的目录**永不覆盖**（重启、重新登录均不重置）
