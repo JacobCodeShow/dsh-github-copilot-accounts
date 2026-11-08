@@ -11,13 +11,13 @@
 ## 特性
 
 - 🔐 **设备码登录/注销**：网页 + user code，免 API Token；SSO 组织授权友好
-- 👥 **多账号管理**：「添加账号」下拉支持 GitHub.com 与 GitHub Enterprise Cloud（输入 `company.ghe.com` 域名）两种入口；多账号并存，**Default 徽标**标记当前激活账号，… 菜单一键切换/注销
+- 👥 **多账号管理**：「添加账号」下拉支持 GitHub.com 与 GitHub Enterprise Cloud（输入 `company.ghe.com` 域名）两种入口；不同域名下的同名账号可独立并存，**Default 徽标**标记当前激活账号，… 菜单一键切换/注销；对话中的账号切换列表显示域名以区分同名账号
 - 📊 **用量展示**：每张账号卡显示套餐（Plan）与 AI credits 进度条（月度重置），数据来自 `copilot_internal/user`
 - 🧩 **预置提供方路由**：安装即出现在 Models 页，无需手动配置
 - 📦 **模型目录兜底填充**：登录成功/切换账号时，若 GitHub Copilot 路由还没有模型目录，自动填入账号可用模型（∩ 内置目录）；你已精简/定制过的目录**永不覆盖**（重启、重新登录均不重置）
 - 🌐 **中/英双语界面**：跟随 DSH 语言设置自动切换
 - 🔑 **凭据安全托管**：全部账号存入 DSH 内置凭据库（文件强制 0600 权限），Copilot 临时 token 到期自动刷新
-- 🧪 **测试与 CI**：23 条单元测试；GitHub Actions 构建测试
+- 🧪 **测试与 CI**：单元测试覆盖登录、账号隔离、激活/注销与用量等行为；GitHub Actions 构建测试
 
 ## 前置要求
 
@@ -58,8 +58,10 @@ dsh plugin add /path/to/dsh-github-copilot-accounts
 
 **多账号语义**（对齐 GitHub Copilot desktop）：
 
-- 多个账号可同时保持登录，但**同时只有一个激活账号**（Default 徽标）服务于对话
-- 卡片右上 **…** 菜单：**设为默认**（切换激活，即刻生效，无需重启）/ **注销**（清除该账号凭据）
+- 多个账号可同时保持登录，但**同时只有一个激活账号**（Default 徽标）服务于对话；添加并成功登录新账号后，新账号自动成为默认，原账号保留
+- 账号按归一化的**域名 + 用户名**区分：同一域名的不同用户、不同域名的同名用户均可独立切换/移除；同一域名与用户名重新授权会更新原账号而非新增一条
+- 卡片右上 **…** 菜单：**设为默认**（切换激活，即刻生效，无需重启）/ **移除账号**（仅清除所选账号凭据）/ **更新授权**（保留原槽位，重新进行同域名设备码登录）
+- 身份查询失败而暂时没有用户名的恢复账号也可独立切换/移除，不会因用户名缺失误操作其它账号
 - 每张卡片下方展示该账号的**套餐（Plan）**与 **AI credits** 进度条（按月重置）；用量拉取失败不影响登录与切换，仅显示不可用原因
 - 注销激活账号后路由回到未配置状态，激活其它账号即可恢复
 
@@ -70,7 +72,7 @@ dsh plugin add /path/to/dsh-github-copilot-accounts
 
 ## 注销与卸载
 
-- 注销单账号：账号卡 **…** 菜单 →「注销」
+- 移除单账号：账号卡 **…** 菜单 →「移除账号」
 - 卸载：`dsh plugin remove dsh-github-copilot-accounts` 后重启 DSH desktop（卸载不影响凭据库中已有记录，重装即恢复）
 
 ## 工作原理
@@ -78,10 +80,11 @@ dsh plugin add /path/to/dsh-github-copilot-accounts
 - 通过 `cordis.patch.yml` 生效：
   1. 注册本插件（host 侧在 webserver 上开 6 条本地路由：`/copilot-auth/start|state|accounts|activate|logout|cancel`，跨站 Origin 拒绝）
   2. 以 settings base 层预置 `github-copilot` 路由（用户 `settings.yaml` 可逐字段覆盖）
-- 登录走 GitHub 设备码流（ghe.com 账号通过 pi-ai 的 Enterprise 域名提问进入对应端点）；**当前激活账号**的凭据存 `~/.dsh/.credentials.yaml`（强制 600 权限）的 `llm-pi-ai/github-copilot` 记录——pi-ai 的请求路径只读它并在请求中自动刷新；**其余账号**由本插件以自有 scope 存槽位记录 `copilot-auth/account-<login>`（同一凭据库）；「设为默认」= 把槽位 payload 原子写入主记录
+- 登录走 GitHub 设备码流（ghe.com 账号通过 pi-ai 的 Enterprise 域名提问进入对应端点）；**当前激活账号**的凭据存 `~/.dsh/.credentials.yaml`（强制 600 权限）的 `llm-pi-ai/github-copilot` 记录——pi-ai 的请求路径只读它并在请求中自动刷新；插件在同一凭据库的 `copilot-auth` scope 中维护各账号槽位，新槽位按归一化的域名与用户名隔离；「设为默认」= 把槽位 payload 原子写入主记录
+- `/copilot-auth/accounts` 为每个账号返回 `id`（实际凭据槽位 key，不含 token 的不透明标识）；前端仅将它用于列表/菜单定位与 `activate`、`logout` 的 `{id}` 请求，用户名仅用于显示，不从用户名或域名自行拼装 id。旧客户端的 `{login}` 请求仅在用户名唯一匹配时兼容；多个域名下有同名账号时返回 `409`，客户端应重新读取账号列表并使用对应 `id`
 - 账号身份（login/头像）取自 `api.<域名>/user`，套餐与用量取自 `copilot_internal/user`（access 过期或 401 先用长期 refresh token 刷新一次，结果回写槽位；结果缓存 5 分钟）
 - **模型目录兜底填充**：登录成功/切换账号时，取「凭据缓存的账号可用模型 ∩ pi-ai 内置目录」写入该路由的模型目录——仅当该路由尚未配置 `models` 且无 `modelOverrides` 时写入；目录已存在（含空列表）一律让路，插件启动/重启也绝不触碰用户 settings。同步失败经 `/copilot-auth/accounts` 的 `syncError` 字段暴露
-- v0.1.0 单账号升级：首次打开账号页或再次登录时，旧凭据自动快照为槽位进入多账号体系
+- **存储兼容**：已有 `copilot-auth/account-<login>` 与 `recovered-*` 槽位保留原 key，不要求迁移或重新登录；同一归一化域名与用户名重新授权会复用已有槽位及其 id。v0.1.0 单账号升级时，首次打开账号页或再次登录会将旧主凭据自动快照为槽位。旧版本已经因跨域同名覆盖而丢失的授权无法凭空恢复，需要重新添加该账号
 
 ## 已知边界
 
@@ -102,7 +105,7 @@ dsh plugin add /path/to/dsh-github-copilot-accounts
 
 ```bash
 npm install
-npm test        # node:test：patch 结构 + host（多账号登录/激活/注销/用量/兜底填充）共 23 条
+npm test        # node:test：patch 结构 + host（多账号登录/隔离/激活/注销/用量/兜底填充）
 npm run build   # esbuild 打包 client 到 lib/client.js（__ModuleLoader__ 信封）
 npm pack --dry-run
 ```
