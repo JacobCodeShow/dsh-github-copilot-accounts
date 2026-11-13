@@ -4,7 +4,7 @@
 //   - 主凭据 llm-pi-ai/github-copilot 恒等于「当前激活账号」的 grant 镜像，
 //     pi-ai 的请求路径只读它（llm-pi-ai/adapter 的 credentialStore 按
 //     providerId 寻址），登录也只写它。
-//   - 其余账号由本插件以自有 scope 存槽位记录 copilot-auth/account-<login>，
+//   - 其余账号由本插件以自有 scope 存域名 + login 隔离的槽位记录，
 //     payload = pi-ai grant + account 元数据；「激活」= 槽位 payload 写主 key。
 export const CREDENTIAL_KEY = "llm-pi-ai/github-copilot";
 export const ACCOUNT_SCOPE = "copilot-auth";
@@ -43,16 +43,23 @@ export function normalizeDomain(input) {
   }
 }
 
-// 槽位地址：copilot-auth/account-<login>。两段都必须满足凭据 key 语法
-// [a-z][a-z0-9-]*：login 统一小写、非法字符折叠为 -（GitHub login 本身
-// 只含字母数字连字符，实际不会触发）；空串落 recovered 占位（host 侧用
-// recovered-<n> 探测空闲位，此处只兜底防空段）。
-export function accountSlotId(login) {
+// 新槽位由归一化域名 + login 唯一定址。UTF-8 hex 保证域名的点/连字符、
+// EMU login 的下划线等不会因字符折叠碰撞，并满足 [a-z][a-z0-9-]*。
+// 不传 domain 时保留旧格式，仅用于兼容旧槽位和 recovered-<n> 占位。
+const hex = (value) => Array.from(new TextEncoder().encode(value), (byte) =>
+  byte.toString(16).padStart(2, "0")).join("");
+
+export function accountSlotId(login, domain) {
+  if (domain !== undefined) {
+    const host = normalizeDomain(domain);
+    if (host === null) throw new Error("invalid account domain");
+    return `account-v2-${hex(host)}-${hex(String(login).toLowerCase())}`;
+  }
   const clean = String(login).toLowerCase().replace(/[^a-z0-9-]/g, "-");
   return `account-${clean === "" ? "recovered" : clean}`;
 }
 
-export const accountKey = (login) => `${ACCOUNT_SCOPE}/${accountSlotId(login)}`;
+export const accountKey = (login, domain) => `${ACCOUNT_SCOPE}/${accountSlotId(login, domain)}`;
 
 // 身份/用量/token 刷新三端点同构于 api.<domain>（对齐 pi-ai getUrls：
 // copilot_internal/v2/token 就在 api.<domain> 下；ghe.com 租户的 REST

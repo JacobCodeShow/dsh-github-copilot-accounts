@@ -429,7 +429,7 @@ function CopilotSection({ t = (key) => DICTS.en[key] ?? key }) {
   const [addOpen, setAddOpen] = useState(false);
   const [enterpriseStep, setEnterpriseStep] = useState(false);
   const [domain, setDomain] = useState("");
-  const [menuFor, setMenuFor] = useState(null); // 打开了 … 菜单的账号 login
+  const [menuFor, setMenuFor] = useState(null); // 打开了 … 菜单的账号 id（不透明槽位标识）
   const [busy, setBusy] = useState(false);
   const [lastStart, setLastStart] = useState(null); // {kind, domain} 最近一次失败的登录参数
   const [countdown, setCountdown] = useState(0); // 登录剩余秒数（到 0 自动取消）
@@ -575,15 +575,15 @@ function CopilotSection({ t = (key) => DICTS.en[key] ?? key }) {
     setLastStart(null);
   };
 
-  const activate = async (login) => {
-    if (login === undefined) return;
+  const activate = async (id) => {
+    if (typeof id !== "string" || id === "") return;
     setMenuFor(null);
     setBusy(true);
     try {
       const res = await fetch("/copilot-auth/activate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ login }),
+        body: JSON.stringify({ id }),
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
@@ -596,26 +596,33 @@ function CopilotSection({ t = (key) => DICTS.en[key] ?? key }) {
     setBusy(false);
   };
 
-  const logout = async (login) => {
+  const logout = async (id) => {
+    if (typeof id !== "string" || id === "") return;
     setMenuFor(null);
     setBusy(true);
     try {
-      await fetch("/copilot-auth/logout", {
+      const res = await fetch("/copilot-auth/logout", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(login === undefined ? {} : { login }),
+        body: JSON.stringify({ id }),
       });
-    } catch { /* 状态以下一步查询为准 */ }
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        setError(d.error ?? `HTTP ${res.status}`);
+      }
+    } catch (err) {
+      setError(String(err?.message ?? err));
+    }
     await refreshAccounts();
     setBusy(false);
   };
 
-  // 更新授权：先删槽位，再触发同域名登录流程（凭据刷新）。
+  // 更新授权：保留槽位并触发同域名登录；后端按域名 + login 复用原 id。
+  // 不预先注销，避免登录取消/失败时丢失仍可用的授权。
   const updateAuth = async (account) => {
     setMenuFor(null);
     const kind = account.domain === "github.com" ? "github.com" : "ghe.com";
     const domainValue = account.domain === "github.com" ? undefined : account.domain;
-    await logout(account.login);
     await start(kind, domainValue);
   };
 
@@ -827,14 +834,14 @@ function CopilotSection({ t = (key) => DICTS.en[key] ?? key }) {
       ) : (
         accounts.map((account) => (
           <AccountCard
-            key={account.login ?? account.domain ?? "account"}
+            key={account.id}
             t={t}
             account={account}
             busy={busy}
-            menuOpen={menuFor !== null && menuFor === account.login}
-            onToggleMenu={() => setMenuFor((v) => (v === account.login ? null : account.login))}
-            onActivate={() => activate(account.login)}
-            onLogout={() => logout(account.login)}
+            menuOpen={menuFor !== null && menuFor === account.id}
+            onToggleMenu={() => setMenuFor((v) => (v === account.id ? null : account.id))}
+            onActivate={() => activate(account.id)}
+            onLogout={() => logout(account.id)}
             onUpdateAuth={() => updateAuth(account)}
             onManagePlan={() => managePlan(account)}
           />
@@ -1008,14 +1015,15 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const switchAccount = async (login) => {
+  const switchAccount = async (id) => {
+    if (typeof id !== "string" || id === "") return;
     setOpen(false);
-    setSwitching(login);
+    setSwitching(id);
     try {
       await fetch("/copilot-auth/activate", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ login }),
+        body: JSON.stringify({ id }),
       });
       refresh();
     } catch { /* 静默 */ }
@@ -1149,9 +1157,10 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
             {accounts && accounts.length > 1 && (
               <div style={{ borderTop: "1px solid rgba(128,128,128,0.15)", padding: "4px 0" }}>
                 {accounts.map((acc) => {
-                  const active = acc.login === whoami.login;
+                  const active = acc.active;
+                  const label = `${acc.domain}/${acc.login ?? acc.name ?? t("legacyAccount")}`;
                   return (
-                    <button key={acc.login} type="button"
+                    <button key={acc.id} type="button"
                       style={{
                         display: "flex", alignItems: "center", gap: 8, width: "100%",
                         padding: "6px 12px", border: "none",
@@ -1160,12 +1169,14 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
                         fontSize: 13, textAlign: "left", color: "inherit",
                       }}
                       disabled={active || switching !== null}
-                      onClick={() => switchAccount(acc.login)}
+                      onClick={() => switchAccount(acc.id)}
                     >
                       <AccountAvatar url={acc.avatarUrl} login={acc.login} size={18} />
-                      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{acc.login ?? "?"}</span>
+                      <span title={label} style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                        {label}
+                      </span>
                       {active && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>✓</span>}
-                      {switching === acc.login && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>{t("badgeSwitching")}</span>}
+                      {switching === acc.id && <span style={{ marginLeft: "auto", fontSize: 11, opacity: 0.5 }}>{t("badgeSwitching")}</span>}
                     </button>
                   );
                 })}

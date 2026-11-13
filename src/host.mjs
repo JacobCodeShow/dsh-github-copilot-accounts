@@ -3,7 +3,7 @@
 //   - 登录两种入口（github.com / ghe.com 企业域名），复用 llm-pi-ai 注册的
 //     同一条 flow——pi-ai 登录固定写主凭据 key，ghe.com 与否只差对 Enterprise
 //     提问的答复内容；
-//   - 多账号槽位（copilot-auth/account-<login>）+ 单激活（槽位 payload 写主
+//   - 域名 + login 隔离的多账号槽位 + 单激活（槽位 payload 写主
 //     key；pi-ai 请求路径只读主 key）；
 //   - 用量展示（copilot_internal/user，access 过期/401 先刷新一次）。
 // 登录成功/激活后把账号可用模型兜底填充为该路由的模型目录（目录保护不变）。
@@ -207,21 +207,44 @@ async function fetchIdentity(domain, refreshToken) {
   };
 }
 
-// 为 grant payload 建立/更新账号槽位，返回槽位 key。
-// 先按 refresh token 找既有槽位（每个授权 grant 唯一且刷新不变）；命中则
-// 原位更新 payload（保留 account 元数据）。未命中：身份可取时按 login 定址，
-// 身份取不到落 recovered-<n> 占位——凭据落袋优先于可显示性，身份可由
-// /accounts 的 backfill 稍后补齐。identity:false 用于登录前快照，不做网络。
+const accountDomain = (payload) => normalizeDomain(payload.enterpriseUrl)
+  ?? normalizeDomain(payload.account?.domain) ?? "github.com";
+const sameGrant = (a, b) => a.refresh === b.refresh && accountDomain(a) === accountDomain(b);
+
+// 优先使用列表返回的 opaque id；旧 login 请求仅在唯一匹配时兼容。
+// 不接受任意凭据 key：id 必须命中本插件枚举出的账号槽位。
+function selectSlot(slots, body) {
+  if (body?.id !== undefined) {
+    if (typeof body.id !== "string" || body.id === "") {
+      return { error: "account id required", code: 400 };
+    }
+    return { specified: true, slot: slots.find((s) => s.key === body.id) };
+  }
+  if (typeof body?.login !== "string" || body.login === "") return { specified: false };
+  const login = body.login.toLowerCase();
+  const domain = body.domain === undefined ? undefined : normalizeDomain(body.domain);
+  if (domain === null) return { error: "invalid account domain", code: 400 };
+  const matches = slots.filter((s) =>
+    (typeof s.payload.account?.login === "string"
+      ? s.payload.account.login.toLowerCase() === login
+      : s.key === accountKey(login))
+    && (domain === undefined || accountDomain(s.payload) === domain));
+  if (matches.length > 1) return { error: "ambiguous login; specify account id or domain", code: 409 };
+  return { specified: true, slot: matches[0] };
+}
+
+// 先按域名 + refresh 找既有 grant；重新授权按域名 + login 复用槽位。
+// 旧格式槽位保留原 key，无需破坏性迁移。身份取不到时落 recovered 占位，
+// identity:false 用于登录前快照，不做网络，也不会根据未验证的身份覆盖授权。
 async function ensureSlot(ctx, payload, { identity = true } = {}) {
-  const refresh = payload.refresh;
+  const domain = accountDomain(payload);
   const slots = await listAccountSlots(ctx);
-  const known = slots.find((s) => s.payload.refresh === refresh);
+  const known = slots.find((s) => sameGrant(s.payload, payload));
   if (known !== undefined) {
     let next = payload;
     if (known.payload.account !== undefined) next = { ...payload, account: known.payload.account };
     if (known.payload.account === undefined && identity) {
-      const domain = normalizeDomain(payload.enterpriseUrl) ?? "github.com";
-      const who = await fetchIdentity(domain, refresh).catch(() => undefined);
+      const who = await fetchIdentity(domain, payload.refresh).catch(() => undefined);
       if (who !== undefined) next = { ...payload, account: { ...who, domain } };
     }
     await ctx.credentials.modifyRecord(known.key, () => ({ kind: "grant", payload: next }));
@@ -229,8 +252,7 @@ async function ensureSlot(ctx, payload, { identity = true } = {}) {
   }
   let login;
   if (identity) {
-    const domain = normalizeDomain(payload.enterpriseUrl) ?? "github.com";
-    const who = await fetchIdentity(domain, refresh).catch(() => undefined);
+    const who = await fetchIdentity(domain, payload.refresh).catch(() => undefined);
     if (who !== undefined) {
       payload = { ...payload, account: { ...who, domain } };
       login = who.login;
@@ -238,7 +260,18 @@ async function ensureSlot(ctx, payload, { identity = true } = {}) {
   }
   let key;
   if (login !== undefined) {
-    key = accountKey(login);
+    const existing = slots.find((s) => accountDomain(s.payload) === domain
+      && typeof s.payload.account?.login === "string"
+      && s.payload.account.login.toLowerCase() === login.toLowerCase());
+    if (existing !== undefined) {
+      key = existing.key;
+    } else {
+      const base = accountKey(login, domain);
+      key = base;
+      // 旧 login 可恰好长得像 v2 编码；不能覆盖任何已占用 key。
+      let n = 1;
+      while (await ctx.credentials.readRecord(key) !== undefined) key = `${base}-${n++}`;
+    }
   } else {
     const taken = new Set(slots.map((s) => s.key));
     let n = 1;
@@ -282,16 +315,16 @@ async function persistRefresh(ctx, key, payload, domain) {
   const refreshIn = typeof data?.refresh_in === "number" ? data.refresh_in : 1500;
   // 回写主 key
   await ctx.credentials.modifyRecord(key, (current) =>
-    isGrant(current)
+    isGrant(current) && sameGrant(current.payload, payload)
       ? { kind: "grant", payload: { ...current.payload, access, expires } }
       : undefined);
   // 同步回写槽位（按 refresh token 匹配），避免切换账号时把旧 access 写回主 key。
   try {
     const slots = await listAccountSlots(ctx);
-    const slot = slots.find((s) => s.payload.refresh === payload.refresh);
+    const slot = slots.find((s) => sameGrant(s.payload, payload));
     if (slot) {
       await ctx.credentials.modifyRecord(slot.key, (current) =>
-        isGrant(current)
+        isGrant(current) && sameGrant(current.payload, payload)
           ? { kind: "grant", payload: { ...current.payload, access, expires } }
           : undefined);
     }
@@ -439,7 +472,17 @@ export function apply(ctx) {
   const r = routes();
   let attempt = emptyState();
   let lastSyncError;
-  const usageCache = new Map(); // 槽位 key → { at, value }
+  const usageCache = new Map(); // 槽位 key → { at, grant, value }
+  const slotUsage = async (slot) => {
+    const cached = usageCache.get(slot.key);
+    if (cached !== undefined && sameGrant(cached.grant, slot.payload)
+      && Date.now() - cached.at < USAGE_TTL_MS) return cached.value;
+    const value = await loadUsage(ctx, slot, accountDomain(slot.payload));
+    // 缓存绑定 grant：旧请求晚到也不能让重新授权后的账号复用旧用量。
+    usageCache.set(slot.key, { at: Date.now(), value,
+      grant: { refresh: slot.payload.refresh, enterpriseUrl: accountDomain(slot.payload) } });
+    return value;
+  };
 
   // 模型目录同步只在登录成功/激活后执行（对齐 2026-09-05 结论：挂载不同步）。
   // 失败不静默：错误经 /accounts 的 syncError 字段暴露，便于诊断。
@@ -454,7 +497,8 @@ export function apply(ctx) {
     try {
       const record = await ctx.credentials.readRecord(CREDENTIAL_KEY);
       if (isGrant(record) && typeof record.payload.refresh === "string") {
-        await ensureSlot(ctx, record.payload);
+        const key = await ensureSlot(ctx, record.payload);
+        usageCache.delete(key); // 重新授权后不沿用旧 grant 的套餐/用量缓存。
       }
     } catch (err) {
       ctx.logger?.warn?.("copilot-auth: account slot persist failed: %s", String(err?.message ?? err));
@@ -479,7 +523,7 @@ export function apply(ctx) {
     try {
       const main = await ctx.credentials.readRecord(CREDENTIAL_KEY);
       if (!isGrant(main) || typeof main.payload.refresh !== "string") return;
-      const domain = normalizeDomain(main.payload.enterpriseUrl) ?? "github.com";
+      const domain = accountDomain(main.payload);
       const { refreshIn } = await persistRefresh(ctx, CREDENTIAL_KEY, main.payload, domain);
       // 按 GitHub 推荐间隔排下次刷新；最少 5 分钟，最多 60 分钟。
       const nextMs = Math.min(60 * 60 * 1000, Math.max(5 * 60 * 1000, refreshIn * 1000));
@@ -606,7 +650,7 @@ export function apply(ctx) {
         const main = await ctx.credentials.readRecord(CREDENTIAL_KEY);
         if (isGrant(main) && typeof main.payload.refresh === "string") {
           const slots = await listAccountSlots(ctx);
-          if (!slots.some((s) => s.payload.refresh === main.payload.refresh)) {
+          if (!slots.some((s) => sameGrant(s.payload, main.payload))) {
             await ensureSlot(ctx, main.payload);
           }
         }
@@ -614,41 +658,36 @@ export function apply(ctx) {
         ctx.logger?.warn?.("copilot-auth: legacy slot migration failed: %s", String(err?.message ?? err));
       }
       let slots = [];
-      let mainRefresh;
+      let mainPayload;
       try {
         slots = await listAccountSlots(ctx);
         const main = await ctx.credentials.readRecord(CREDENTIAL_KEY);
-        mainRefresh = isGrant(main) ? main.payload?.refresh : undefined;
+        mainPayload = isGrant(main) ? main.payload : undefined;
       } catch {
         slots = [];
-        mainRefresh = undefined;
+        mainPayload = undefined;
       }
       const accounts = await Promise.all(slots.map(async (slot) => {
         const meta = slot.payload.account !== null && typeof slot.payload.account === "object"
           ? slot.payload.account
           : {};
-        let usage = usageCache.get(slot.key);
-        if (usage === undefined || Date.now() - usage.at >= USAGE_TTL_MS) {
-          const value = await loadUsage(ctx, slot, normalizeDomain(slot.payload.enterpriseUrl) ?? "github.com");
-          usage = { at: Date.now(), value };
-          usageCache.set(slot.key, usage);
-        }
+        const usage = await slotUsage(slot);
         return {
+          id: slot.key,
           login: typeof meta.login === "string" ? meta.login : undefined,
           name: typeof meta.name === "string" ? meta.name : undefined,
           avatarUrl: typeof meta.avatarUrl === "string" ? meta.avatarUrl : undefined,
-          domain: typeof meta.domain === "string"
-            ? meta.domain
-            : normalizeDomain(slot.payload.enterpriseUrl) ?? "github.com",
-          active: typeof mainRefresh === "string" && slot.payload.refresh === mainRefresh,
-          plan: usage.value.plan,
-          usage: usage.value.error === undefined ? usage.value.usage : undefined,
-          usageError: usage.value.error,
+          domain: accountDomain(slot.payload),
+          active: mainPayload !== undefined && sameGrant(slot.payload, mainPayload),
+          plan: usage.plan,
+          usage: usage.error === undefined ? usage.usage : undefined,
+          usageError: usage.error,
         };
       }));
       // 激活的排最前，其余按 login 稳定排序。
       accounts.sort((a, b) =>
-        Number(b.active) - Number(a.active) || String(a.login ?? "").localeCompare(String(b.login ?? "")));
+        Number(b.active) - Number(a.active) || String(a.login ?? "").localeCompare(String(b.login ?? ""))
+        || a.domain.localeCompare(b.domain) || a.id.localeCompare(b.id));
       json(res, 200, { accounts, signingIn: attempt.status === "running", syncError: lastSyncError });
     },
   });
@@ -665,20 +704,20 @@ export function apply(ctx) {
         json(res, 400, { ok: false, error: err?.message ?? "invalid body" });
         return;
       }
-      const login = typeof body?.login === "string" && body.login !== "" ? body.login : undefined;
-      if (login === undefined) {
-        json(res, 400, { ok: false, error: "login required" });
+      let selection;
+      try {
+        selection = selectSlot(await listAccountSlots(ctx), body);
+      } catch (err) {
+        json(res, 500, { ok: false, error: String(err?.message ?? err) });
         return;
       }
-      const key = accountKey(login);
-      let slot;
-      try {
-        slot = await ctx.credentials.readRecord(key);
-      } catch {
-        slot = undefined;
+      if (selection.error || !selection.specified) {
+        json(res, selection.code ?? 400, { ok: false, error: selection.error ?? "account id or login required" });
+        return;
       }
-      if (!isGrant(slot) || typeof slot.payload.refresh !== "string") {
-        json(res, 404, { ok: false, error: `no account "${login}"` });
+      const slot = selection.slot;
+      if (slot === undefined) {
+        json(res, 404, { ok: false, error: "no such account" });
         return;
       }
       try {
@@ -708,26 +747,29 @@ export function apply(ctx) {
       } catch {
         body = {};
       }
-      const login = typeof body?.login === "string" && body.login !== "" ? body.login : undefined;
       try {
         const main = await ctx.credentials.readRecord(CREDENTIAL_KEY).catch(() => undefined);
         const mainPayload = isGrant(main) ? main.payload : undefined;
         const slots = await listAccountSlots(ctx);
+        const selection = selectSlot(slots, body);
+        if (selection.error) {
+          json(res, selection.code, { ok: false, error: selection.error });
+          return;
+        }
         let slotKey;
-        if (login !== undefined) {
-          const key = accountKey(login);
+        if (selection.specified) {
           // 指名注销但无此账号：幂等 no-op，绝不落入 legacy 分支删主 key。
-          if (!slots.some((s) => s.key === key)) {
+          if (selection.slot === undefined) {
             json(res, 200, { ok: true });
             return;
           }
-          slotKey = key;
+          slotKey = selection.slot.key;
         } else if (mainPayload !== undefined) {
-          slotKey = slots.find((s) => s.payload.refresh === mainPayload.refresh)?.key;
+          slotKey = slots.find((s) => sameGrant(s.payload, mainPayload))?.key;
         }
         if (slotKey !== undefined) {
           const hit = slots.find((s) => s.key === slotKey);
-          if (hit !== undefined && mainPayload !== undefined && hit.payload.refresh === mainPayload.refresh) {
+          if (hit !== undefined && mainPayload !== undefined && sameGrant(hit.payload, mainPayload)) {
             // 注销的是激活账号：主 key 一并清除，Models 页该路由回到未配置。
             await ctx.credentials.deleteRecord(CREDENTIAL_KEY);
           }
@@ -827,23 +869,17 @@ export function apply(ctx) {
         let plan = null, usagePercent = null, usageResetDate = null;
         try {
           const slots = await listAccountSlots(ctx);
-          const match = slots.find((s) => s.payload.refresh === p.refresh);
+          const match = slots.find((s) => sameGrant(s.payload, p));
           if (match) {
             const meta = match.payload.account
               && typeof match.payload.account === "object"
               ? match.payload.account : {};
             login = typeof meta.login === "string" ? meta.login : null;
             avatarUrl = typeof meta.avatarUrl === "string" ? meta.avatarUrl : null;
-            const domain = normalizeDomain(match.payload.enterpriseUrl) ?? "github.com";
-            let u = usageCache.get(match.key);
-            if (u === undefined || Date.now() - u.at >= USAGE_TTL_MS) {
-              const value = await loadUsage(ctx, match, domain);
-              u = { at: Date.now(), value };
-              usageCache.set(match.key, u);
-            }
-            if (u.value && u.value.error === undefined) {
-              plan = u.value.plan ?? null;
-              const usage = u.value.usage;
+            const u = await slotUsage(match);
+            if (u && u.error === undefined) {
+              plan = u.plan ?? null;
+              const usage = u.usage;
               if (usage && typeof usage.percentUsed === "number") {
                 // 取整避免浮点误差（上游 69.200000...% 直接透传会显示长串小数）。
                 usagePercent = Math.round(usage.percentUsed);

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import plugin from "../src/host.mjs";
+import { accountKey } from "../src/shared.mjs";
 
 const MAIN = "llm-pi-ai/github-copilot";
 const ENTERPRISE_PROMPT = { kind: "text", message: "GitHub Enterprise URL/domain (blank for github.com)" };
@@ -207,12 +208,13 @@ test("登录成功建槽（身份入 payload.account）且 /accounts 标记激�
   await sleep();
   const state = await call(handler(ctx, "/state"));
   assert.equal(state.body.status, "authorized");
-  const slot = ctx.credentials.records.get("copilot-auth/account-octocat");
-  assert.ok(slot, "登录成功后应建槽 account-octocat");
+  const slot = ctx.credentials.records.get(accountKey("octocat", "github.com"));
+  assert.ok(slot, "登录成功后应建域名隔离的槽位");
   assert.equal(slot.kind, "grant");
   assert.deepEqual(slot.payload.account, { login: "octocat", name: "Octo Cat", avatarUrl: "https://avatars.example/u.png", domain: "github.com" });
   const list = await call(handler(ctx, "/accounts"));
   assert.deepEqual(list.body.accounts, [{
+    id: accountKey("octocat", "github.com"),
     login: "octocat",
     name: "Octo Cat",
     avatarUrl: "https://avatars.example/u.png",
@@ -264,7 +266,7 @@ test("accounts 迁移：主凭据无槽位时补建（含身份回填）", async
   assert.equal(list.body.accounts.length, 1);
   assert.equal(list.body.accounts[0].login, "octocat");
   assert.equal(list.body.accounts[0].active, true);
-  assert.ok(ctx.credentials.records.get("copilot-auth/account-octocat"), "读列表应补建迁移槽位");
+  assert.ok(ctx.credentials.records.get(accountKey("octocat", "github.com")), "读列表应补建迁移槽位");
 });
 
 test("activate：槽位 payload 原子写入主 key 并触发目录同步；未知账号 404", async (t) => {
@@ -390,6 +392,254 @@ test("模型同步失败时经 /accounts 暴露 syncError", async (t) => {
   await sleep();
   const res = await call(handler(ctx, "/accounts"));
   assert.equal(res.body.syncError, "validation boom");
+});
+
+const grant = (domain, refresh, login = "alice") => ({
+  kind: "grant", payload: { type: "oauth", refresh, access: `access-${refresh}`, expires: Date.now() + 3_600_000,
+    ...(domain === "github.com" ? {} : { enterpriseUrl: domain }), account: { login, domain } },
+});
+const multiFetch = (url, init) => {
+  if (url.includes("copilot_internal/v2/token")) return {
+    ok: true, json: async () => ({ token: `fresh-${new URL(url).hostname}`, expires_at: Date.now() / 1000 + 3600 }),
+  };
+  if (url.includes("copilot_internal/user")) return usageResponse(
+    new URL(url).hostname === "api.company-a.ghe.com" ? "business" : "enterprise");
+  if (url.endsWith("/user")) return identityResponse("alice");
+  return { ok: false, status: 500, statusText: "mock down" };
+};
+
+// 完整登录流程复现 issue #1，同时涵盖 github.com 与 GHE 同名账号。
+test("三个域名的同名账号并存，新登录激活、用量独立、按 id 切换和注销", async (t) => {
+  const ctx = makeCtx(t, { fetchImpl: multiFetch });
+  for (const [domain, refresh] of [["company-a.ghe.com", "ra"], ["company-b.ghe.com", "rb"], ["github.com", "rc"]]) {
+    ctx.script.writtenOnAuthorized = grant(domain, refresh).payload;
+    await call(handler(ctx, "/start"), { method: "POST", body: { kind: domain === "github.com" ? "github.com" : "ghe.com", domain } });
+    await sleep();
+    assert.equal((await call(handler(ctx, "/state"))).body.status, "authorized");
+  }
+  const accounts = (await call(handler(ctx, "/accounts"))).body.accounts;
+  assert.equal(accounts.length, 3);
+  assert.equal(new Set(accounts.map((a) => a.id)).size, 3);
+  assert.equal(accounts.filter((a) => a.active).length, 1);
+  assert.equal(accounts[0].domain, "github.com");
+  assert.equal(accounts.find((a) => a.domain === "company-a.ghe.com").plan, "Copilot Business");
+  assert.equal(accounts.find((a) => a.domain === "company-b.ghe.com").plan, "Copilot Enterprise");
+  for (const account of accounts) {
+    assert.equal((await call(handler(ctx, "/activate"), { method: "POST", body: { id: account.id } })).code, 200);
+    await sleep();
+    const active = (await call(handler(ctx, "/accounts"))).body.accounts.filter((a) => a.active);
+    assert.deepEqual(active.map((a) => a.id), [account.id]);
+    assert.equal(ctx.credentials.records.get(MAIN).payload.account.domain, account.domain);
+  }
+  const mainRefresh = ctx.credentials.records.get(MAIN).payload.refresh;
+  const inactive = accounts.find((a) => ctx.credentials.records.get(a.id).payload.refresh !== mainRefresh);
+  assert.equal((await call(handler(ctx, "/logout"), { method: "POST", body: { id: inactive.id } })).code, 200);
+  assert.equal(ctx.credentials.records.has(inactive.id), false);
+  assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, mainRefresh);
+  const active = (await call(handler(ctx, "/accounts"))).body.accounts.find((a) => a.active);
+  assert.equal((await call(handler(ctx, "/logout"), { method: "POST", body: { id: active.id } })).code, 200);
+  assert.equal(ctx.credentials.records.has(MAIN), false);
+  assert.equal((await call(handler(ctx, "/accounts"))).body.accounts.length, 1);
+});
+
+test("旧同名 GHE 槽位不被新域名覆盖，重新授权原域名复用旧 id", async (t) => {
+  const legacy = "copilot-auth/account-alice";
+  const a = grant("company-a.ghe.com", "ra");
+  const b = grant("company-b.ghe.com", "rb");
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [legacy]: a }, writtenOnAuthorized: b.payload, fetchImpl: multiFetch });
+  await call(handler(ctx, "/start"), { method: "POST", body: { kind: "ghe.com", domain: "company-b.ghe.com" } });
+  await sleep();
+  assert.equal(ctx.credentials.records.get(legacy).payload.refresh, "ra");
+  assert.equal((await call(handler(ctx, "/accounts"))).body.accounts.length, 2);
+  ctx.script.writtenOnAuthorized = grant("company-a.ghe.com", "ra-new").payload;
+  await call(handler(ctx, "/start"), { method: "POST", body: { kind: "ghe.com", domain: "company-a.ghe.com" } });
+  await sleep();
+  assert.equal(ctx.credentials.records.get(legacy).payload.refresh, "ra-new");
+  assert.equal(ctx.credentials.records.get(accountKey("alice", "company-b.ghe.com")).payload.refresh, "rb");
+  assert.equal((await call(handler(ctx, "/accounts"))).body.accounts.length, 2);
+  assert.equal(ctx.credentials.records.has(accountKey("alice", "company-a.ghe.com")), false);
+});
+
+test("同域重新授权复用新格式 id，清除旧用量缓存", async (t) => {
+  const domain = "company-a.ghe.com";
+  const id = accountKey("alice", domain);
+  const a = grant(domain, "old");
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [id]: a }, fetchImpl: multiFetch });
+  await call(handler(ctx, "/accounts"));
+  ctx.script.writtenOnAuthorized = grant(domain, "new").payload;
+  await call(handler(ctx, "/start"), { method: "POST", body: { kind: "ghe.com", domain } });
+  await sleep();
+  const accounts = (await call(handler(ctx, "/accounts"))).body.accounts;
+  assert.deepEqual(accounts.map((a) => a.id), [id]);
+  assert.equal(ctx.credentials.records.get(id).payload.refresh, "new");
+  assert.equal(ctx.fetchCalls.filter((c) => c.url.includes("copilot_internal/user")).length, 2);
+});
+
+test("旧 login 请求同名时拒绝歧义，login + domain 可精确选择", async (t) => {
+  const a = grant("company-a.ghe.com", "ra");
+  const b = grant("company-b.ghe.com", "rb");
+  const legacy = "copilot-auth/account-alice";
+  const idB = accountKey("alice", "company-b.ghe.com");
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [legacy]: a, [idB]: b }, fetchImpl: multiFetch });
+  for (const route of ["/activate", "/logout"]) {
+    assert.equal((await call(handler(ctx, route), { method: "POST", body: { login: "alice" } })).code, 409);
+    assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, "ra");
+    assert.equal(ctx.credentials.records.has(legacy), true);
+    assert.equal(ctx.credentials.records.has(idB), true);
+    assert.equal((await call(handler(ctx, route), { method: "POST", body: { login: "alice", domain: "not a domain!" } })).code, 400);
+  }
+  assert.equal((await call(handler(ctx, "/activate"), { method: "POST", body: { login: "ALICE", domain: "https://COMPANY-B.ghe.com/" } })).code, 200);
+  await sleep();
+  assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, "rb");
+  assert.equal((await call(handler(ctx, "/logout"), { method: "POST", body: { login: "alice", domain: "company-a.ghe.com" } })).code, 200);
+  assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, "rb");
+  assert.equal(ctx.credentials.records.has(legacy), false);
+  assert.equal((await call(handler(ctx, "/logout"), { method: "POST", body: { login: "alice" } })).code, 200);
+  assert.equal(ctx.credentials.records.has(MAIN), false, "唯一 login 继续兼容");
+});
+
+test("未知或非法 id 不回退到当前账号，也不能操作其它 scope 的凭据", async (t) => {
+  const a = grant("company-a.ghe.com", "ra");
+  const id = accountKey("alice", "company-a.ghe.com");
+  const other = "other/account-alice";
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [id]: a, [other]: a } });
+  for (const target of [MAIN, other, "copilot-auth/account-missing"]) {
+    assert.equal((await call(handler(ctx, "/activate"), { method: "POST", body: { id: target, login: "alice" } })).code, 404);
+    assert.equal((await call(handler(ctx, "/logout"), { method: "POST", body: { id: target, login: "alice" } })).code, 200);
+  }
+  for (const invalid of ["", null, 42]) {
+    for (const route of ["/activate", "/logout"]) {
+      assert.equal((await call(handler(ctx, route), { method: "POST", body: { id: invalid } })).code, 400);
+    }
+  }
+  assert.equal(ctx.credentials.records.size, 3);
+  assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, "ra");
+});
+
+test("身份获取失败的 recovered 账号可按 id 切换注销，不与真实用户名碰撞", async (t) => {
+  const old = grant("company-a.ghe.com", "ra");
+  delete old.payload.account;
+  const recovered = "copilot-auth/account-recovered-1";
+  const ctx = makeCtx(t, { records: { [recovered]: old }, writtenOnAuthorized: grant("github.com", "rb", "recovered-1").payload,
+    fetchImpl: (url) => url.endsWith("/user") && !url.includes("copilot_internal") ? identityResponse("recovered-1") : usageResponse() });
+  await call(handler(ctx, "/start"), { method: "POST", body: { kind: "github.com" } });
+  await sleep();
+  const accounts = (await call(handler(ctx, "/accounts"))).body.accounts;
+  assert.equal(accounts.length, 2);
+  assert.equal(accounts.find((a) => a.id === recovered).login, undefined);
+  assert.equal((await call(handler(ctx, "/activate"), { method: "POST", body: { id: recovered } })).code, 200);
+  await sleep();
+  assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, "ra");
+  assert.equal((await call(handler(ctx, "/logout"), { method: "POST", body: { id: recovered } })).code, 200);
+  assert.equal(ctx.credentials.records.has(MAIN), false);
+  assert.equal(ctx.credentials.records.has(accountKey("recovered-1", "github.com")), true);
+});
+
+test("不同域名即使 refresh 字符串相同，也不误合并、误激活或误删主凭据", async (t) => {
+  const a = grant("company-a.ghe.com", "same-token");
+  const idA = accountKey("alice", "company-a.ghe.com");
+  const idB = accountKey("alice", "company-b.ghe.com");
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [idA]: a }, writtenOnAuthorized: grant("company-b.ghe.com", "same-token").payload, fetchImpl: multiFetch });
+  await call(handler(ctx, "/start"), { method: "POST", body: { kind: "ghe.com", domain: "company-b.ghe.com" } });
+  await sleep();
+  const accounts = (await call(handler(ctx, "/accounts"))).body.accounts;
+  assert.equal(accounts.length, 2);
+  assert.deepEqual(accounts.filter((a) => a.active).map((a) => a.id), [idB]);
+  assert.equal((await call(handler(ctx, "/whoami"))).body.plan, "Copilot Enterprise", "徽章不误用 A 域名的 Business 套餐");
+  assert.equal((await call(handler(ctx, "/logout"), { method: "POST", body: { id: idA } })).code, 200);
+  assert.equal(ctx.credentials.records.get(MAIN).payload.enterpriseUrl, "company-b.ghe.com");
+});
+
+test("账号切换期间旧域名 token 刷新不会覆盖新账号主凭据", async (t) => {
+  const a = grant("company-a.ghe.com", "ra");
+  const b = grant("company-b.ghe.com", "rb");
+  const idA = accountKey("alice", "company-a.ghe.com");
+  const idB = accountKey("alice", "company-b.ghe.com");
+  let release;
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [idA]: a, [idB]: b }, fetchImpl: (url) => {
+    if (url === "https://api.company-a.ghe.com/copilot_internal/v2/token") return new Promise((resolve) => { release = resolve; });
+    return multiFetch(url);
+  } });
+  await call(handler(ctx, "/activate"), { method: "POST", body: { id: idA } });
+  assert.equal(typeof release, "function");
+  await call(handler(ctx, "/activate"), { method: "POST", body: { id: idB } });
+  await sleep();
+  release({ ok: true, json: async () => ({ token: "fresh-a", expires_at: Date.now() / 1000 + 3600 }) });
+  await sleep();
+  assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, "rb");
+  assert.equal(ctx.credentials.records.get(MAIN).payload.access, "fresh-api.company-b.ghe.com");
+  assert.equal(ctx.credentials.records.get(idA).payload.access, "fresh-a");
+});
+
+test("新格式 key 与合法旧用户名碰撞时保留旧账号并分配空闲 id", async (t) => {
+  const base = accountKey("a", "github.com");
+  const legacyLogin = base.slice("copilot-auth/account-".length);
+  const old = grant("github.com", "old", legacyLogin);
+  const ctx = makeCtx(t, { records: { [MAIN]: old, [base]: old }, writtenOnAuthorized: grant("github.com", "new", "a").payload,
+    fetchImpl: (url) => url.endsWith("/user") && !url.includes("copilot_internal") ? identityResponse("a") : usageResponse() });
+  await call(handler(ctx, "/start"), { method: "POST", body: { kind: "github.com" } });
+  await sleep();
+  assert.equal(ctx.credentials.records.get(base).payload.refresh, "old");
+  const accounts = (await call(handler(ctx, "/accounts"))).body.accounts;
+  assert.equal(accounts.length, 2);
+  const fresh = accounts.find((a) => a.login === "a");
+  assert.equal(fresh.id, `${base}-1`);
+  assert.equal(fresh.active, true);
+  ctx.script.writtenOnAuthorized = grant("github.com", "new-again", "a").payload;
+  await call(handler(ctx, "/start"), { method: "POST", body: { kind: "github.com" } });
+  await sleep();
+  assert.equal(ctx.credentials.records.get(fresh.id).payload.refresh, "new-again");
+  assert.equal((await call(handler(ctx, "/accounts"))).body.accounts.length, 2);
+});
+
+test("slot 刷新写入前重新授权也不会污染新 grant", async (t) => {
+  const domain = "company-a.ghe.com";
+  const id = accountKey("alice", domain);
+  const a = grant(domain, "old");
+  const next = grant(domain, "new");
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [id]: a }, fetchImpl: multiFetch });
+  const modify = ctx.credentials.modifyRecord.bind(ctx.credentials);
+  let replaced = false;
+  ctx.credentials.modifyRecord = async (key, mutate) => {
+    if (key === id && !replaced) {
+      replaced = true;
+      ctx.credentials.records.set(id, next);
+      ctx.credentials.records.set(MAIN, next);
+    }
+    return modify(key, mutate);
+  };
+  await call(handler(ctx, "/activate"), { method: "POST", body: { id } });
+  await sleep();
+  assert.equal(replaced, true);
+  assert.equal(ctx.credentials.records.get(id).payload.refresh, "new");
+  assert.equal(ctx.credentials.records.get(id).payload.access, "access-new");
+  assert.equal(ctx.credentials.records.get(MAIN).payload.access, "access-new");
+});
+
+test("旧用量请求晚于重新授权返回时，列表和徽章不复用旧 grant 缓存", async (t) => {
+  const domain = "company-a.ghe.com";
+  const id = accountKey("alice", domain);
+  const old = grant(domain, "old");
+  let release, notify;
+  const started = new Promise((resolve) => { notify = resolve; });
+  const ctx = makeCtx(t, { records: { [MAIN]: old, [id]: old }, fetchImpl: (url, count) => {
+    if (url.includes("copilot_internal/user")) {
+      if (release === undefined) return new Promise((resolve) => { release = resolve; notify(); });
+      return usageResponse("enterprise");
+    }
+    return multiFetch(url);
+  } });
+  const pending = call(handler(ctx, "/accounts"));
+  await started;
+  ctx.script.writtenOnAuthorized = grant(domain, "new").payload;
+  await call(handler(ctx, "/start"), { method: "POST", body: { kind: "ghe.com", domain } });
+  await sleep();
+  assert.equal((await call(handler(ctx, "/accounts"))).body.accounts[0].plan, "Copilot Enterprise");
+  release(usageResponse("business"));
+  await pending;
+  assert.equal((await call(handler(ctx, "/accounts"))).body.accounts[0].plan, "Copilot Enterprise");
+  assert.equal((await call(handler(ctx, "/whoami"))).body.plan, "Copilot Enterprise");
+  assert.equal(ctx.fetchCalls.filter((c) => c.url.includes("copilot_internal/user")).length, 3);
 });
 
 test("跨站 Origin 拒绝 403，同源/无 Origin 放行", async (t) => {
