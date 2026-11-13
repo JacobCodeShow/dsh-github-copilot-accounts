@@ -11,10 +11,10 @@
 // 数据级目录补丁无法写入；上游新模型随 DSH 升级获得。
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { exec } from "node:child_process";
+import childProcess from "node:child_process";
 import { pathToFileURL } from "node:url";
 import {
-  ACCOUNT_SCOPE, CREDENTIAL_KEY, ROUTE_PREFIX, accountKey, apiBase, emptyState, normalizeDomain, routes,
+  ACCOUNT_SCOPE, CREDENTIAL_KEY, ROUTE_PREFIX, accountKey, apiBase, emptyState, isGitHubDomain, normalizeDomain, routes,
 } from "./shared.mjs";
 
 export const name = "copilot-auth";
@@ -470,6 +470,7 @@ export function apply(ctx) {
     ctx.logger?.warn?.("copilot-auth: proxy setup failed: %s", String(err?.message ?? err));
   });
   const r = routes();
+  const register = (route) => ctx.effect(() => ctx.webServer.register(route));
   let attempt = emptyState();
   let lastSyncError;
   const usageCache = new Map(); // 槽位 key → { at, grant, value }
@@ -512,9 +513,15 @@ export function apply(ctx) {
   // pi-ai 仅在 expires 到期时刷新，但 GitHub 的 expires_at 偏长、access 实际早失效。
   // 这里按 refresh_in（默认 25min）周期刷新，保证 pi-ai 读到的 access 始终有效。
   let refreshTimer = null;
+  let disposed = false;
+  ctx.effect(() => () => {
+    disposed = true;
+    if (refreshTimer) clearTimeout(refreshTimer);
+  });
   // 统一排下一次刷新。unref() 让定时器不保活事件循环——node --test / CLI
   // 场景进程跑完即退；DSH 宿主常驻且有其他句柄，定时器照常触发。
   const scheduleRefresh = (delayMs) => {
+    if (disposed) return;
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(refreshActive, delayMs);
     refreshTimer.unref?.();
@@ -537,7 +544,7 @@ export function apply(ctx) {
   // 启动延迟刷新（登录时 pi-ai 已拿到 fresh token，不必立刻刷）。
   scheduleRefresh(25 * 60 * 1000);
 
-  ctx.webServer.register({
+  register({
     kind: "exact",
     path: r.start,
     handler: async (req, res) => {
@@ -561,7 +568,7 @@ export function apply(ctx) {
       let domain;
       if (kind === "ghe.com") {
         domain = normalizeDomain(body.domain);
-        if (domain === null || !domain.includes(".")) {
+        if (domain === "github.com" || !isGitHubDomain(domain)) {
           json(res, 400, { ok: false, error: 'ghe.com sign-in needs a domain like "company.ghe.com"' });
           return;
         }
@@ -630,7 +637,7 @@ export function apply(ctx) {
     },
   });
 
-  ctx.webServer.register({
+  register({
     kind: "exact",
     path: r.state,
     handler: (req, res) => {
@@ -639,7 +646,7 @@ export function apply(ctx) {
     },
   });
 
-  ctx.webServer.register({
+  register({
     kind: "exact",
     path: r.accounts,
     handler: async (req, res) => {
@@ -692,7 +699,7 @@ export function apply(ctx) {
     },
   });
 
-  ctx.webServer.register({
+  register({
     kind: "exact",
     path: r.activate,
     handler: async (req, res) => {
@@ -735,7 +742,7 @@ export function apply(ctx) {
     },
   });
 
-  ctx.webServer.register({
+  register({
     kind: "exact",
     path: r.logout,
     handler: async (req, res) => {
@@ -790,7 +797,7 @@ export function apply(ctx) {
   // ctx.authorization.cancel(key) 会 abort 内部 AbortController，
   // 使 begin() 的 attempt() resolve 为 cancelled，finally 删除 running 条目，
   // 下次 begin() 不再报 ALREADY_IN_FLIGHT。
-  ctx.webServer.register({
+  register({
     kind: "exact",
     path: r.cancel,
     handler: (req, res) => {
@@ -805,37 +812,36 @@ export function apply(ctx) {
 
   // 打开外部 URL（系统默认浏览器）。
   // Electron 的 <a target="_blank"> 和 window.open 不可靠——主进程可能
-  // 拦截或无 shell.openExternal 配置。host 侧用 child_process.exec 调
+  // 拦截或无 shell.openExternal 配置。host 侧用 child_process.execFile 调
   // OS 默认浏览器命令，跨平台（win32/darwin/linux）。
-  ctx.webServer.register({
+  register({
     kind: "exact",
     path: r.open,
-    handler: (req, res) => {
+    handler: async (req, res) => {
       if (!guard(req, res, "POST")) return;
-      let body = "";
-      req.on("data", (chunk) => { body += chunk; });
-      req.on("end", () => {
-        try {
-          const { url } = JSON.parse(body);
-          // 只允许 https URL，防注入
-          if (typeof url !== "string" || !url.startsWith("https://")) {
-            json(res, 400, { ok: false, error: "invalid url" });
-            return;
-          }
-          const cmd = process.platform === "win32" ? `start "" "${url}"`
-            : process.platform === "darwin" ? `open "${url}"`
-            : `xdg-open "${url}"`;
-          exec(cmd, (err) => {
-            if (err) {
-              json(res, 500, { ok: false, error: String(err?.message ?? err) });
-              return;
-            }
-            json(res, 200, { ok: true });
-          });
-        } catch {
-          json(res, 400, { ok: false, error: "bad request" });
-        }
-      });
+      let url;
+      try {
+        const body = await readJsonBody(req);
+        if (typeof body?.url !== "string") throw new Error("invalid url");
+        url = new URL(body.url);
+        if (url.protocol !== "https:" || !isGitHubDomain(url.hostname)
+          || url.username || url.password || url.port) throw new Error("invalid url");
+      } catch {
+        json(res, 400, { ok: false, error: "invalid url" });
+        return;
+      }
+      const command = process.platform === "win32"
+        ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "rundll32.exe")
+        : process.platform === "darwin" ? "open" : "xdg-open";
+      const args = process.platform === "win32" ? ["url.dll,FileProtocolHandler", url.href] : [url.href];
+      try {
+        await new Promise((resolve, reject) => {
+          childProcess.execFile(command, args, { shell: false }, (err) => err ? reject(err) : resolve());
+        });
+        json(res, 200, { ok: true });
+      } catch (err) {
+        json(res, 500, { ok: false, error: String(err?.message ?? err) });
+      }
     },
   });
 
@@ -843,7 +849,7 @@ export function apply(ctx) {
   // pi-ai OAuthCredentials.expires 可能是毫秒或秒（不同版本），用启发式判断。
   // login/avatarUrl 不在 OAuth payload 里——它们存在插件槽位记录的
   // account.meta 中，whoami 交叉引用槽位补齐身份。
-  ctx.webServer.register({
+  register({
     kind: "exact",
     path: r.whoami,
     handler: async (req, res) => {
@@ -908,7 +914,7 @@ export function apply(ctx) {
   });
 
   // 手动刷新 access token：用于 token 实际已失效但 expires 未到期时强制刷新。
-  ctx.webServer.register({
+  register({
     kind: "exact",
     path: r.refresh,
     handler: async (req, res) => {
@@ -923,7 +929,7 @@ export function apply(ctx) {
   });
 
   // DEBUG 路由：诊断代理/网络状态
-  ctx.webServer.register({
+  register({
     kind: "exact",
     path: `${ROUTE_PREFIX}/debug`,
     handler: async (req, res) => {
