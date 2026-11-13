@@ -1,6 +1,6 @@
 # dsh-github-copilot-accounts
 
-为 DSH（DeepSeek Harness）**桌面版**提供 GitHub Copilot **多账号管理**：设备码登录、多账号一键切换、额度与用量展示，并预置一条开箱即用的 GitHub Copilot 提供方路由。实测适配 `DSH 0.2.0-rc.1 desktop`（向下兼容 0.1.7-rc.2）。
+为 DSH（DeepSeek Harness）**桌面版**提供 GitHub Copilot **多账号管理**：设备码登录、多账号一键切换、额度与用量展示，并预置一条开箱即用的 GitHub Copilot 提供方路由。当前验证基准为 `DSH 0.2.2-rc.1 desktop`；另有 `0.2.0-rc.1` 与 `0.1.7-rc.2` 兼容验证记录。
 
 ## 这是什么
 
@@ -19,9 +19,9 @@
 - 🔑 **凭据安全托管**：全部账号存入 DSH 内置凭据库（文件强制 0600 权限），Copilot 临时 token 到期自动刷新
 - 🧪 **测试与 CI**：单元测试覆盖登录、账号隔离、激活/注销与用量等行为；GitHub Actions 构建测试
 
-## 前置要求
+## 前置要求与验证版本
 
-- DSH `0.2.0-rc.1` desktop（实测版本；0.1.7-rc.2 亦可）
+- 当前验证基准：DSH desktop `0.2.2-rc.1`。版本号后缀仅表示最近一次验证所基于的版本，不代表最低支持版本；其他版本的兼容性以实际验证记录为准
 - 有效的 GitHub Copilot 订阅（个人账号或企业组织账号均可，SSO 登录）
 - `pnpm` 可用（`dsh plugin` 是 pnpm 转发器）
 
@@ -88,7 +88,7 @@ dsh plugin add /path/to/dsh-github-copilot-accounts
 
 ## 已知边界
 
-- **不提供模型目录刷新**：桌面版（0.2.0-rc.1）把 pi-ai 打包进只读的 `app.asar`，数据级目录补丁无法写入，故本插件不实现目录刷新。上游新增模型需随 DSH 升级获得；pi-ai 内置目录已描述的模型可在 Models 页手动添加
+- **不提供模型目录刷新**：桌面版（0.2.2-rc.1）把 pi-ai 打包进只读的 `app.asar`，数据级目录补丁无法写入，故本插件不实现目录刷新。上游新增模型需随 DSH 升级获得；pi-ai 内置目录已描述的模型可在 Models 页手动添加
 - **ghe.com 用量端点未实测**（实测账号为 github.com 组织账号）：企业账号的 `copilot_internal/user` 按 pi-ai token 端点同构推导为 `api.<域名>`；不可用时仅该卡显示「用量不可用」，登录/切换主流程不受影响
 - 用量进度条依赖 `copilot_internal/user` 的响应字段（`copilot_plan` / `quota_snapshots.premium_interactions`），字段缺失或上游改名时对应元素自动隐藏
 - 登录进行中不能并发发起第二次登录（409）
@@ -97,7 +97,7 @@ dsh plugin add /path/to/dsh-github-copilot-accounts
 - 自行在 `cordis.patch.yml` patch `llm-pi-ai` 整段 config 会覆盖预置路由
 - `settings.yaml` 的 `llm-pi-ai:` 节只能稀疏覆盖字段，无法删除预置路由本身（移除须卸载本插件）
 - 路由前缀 `/copilot-auth` 两侧硬编码，不可配置
-- DSH rc 版本耦合：实测 `0.2.0-rc.1`（0.1.7-rc.2 兼容），peer 仅 `@deepseek-ai/cordis@^4.0.2`
+- DSH rc 版本耦合：当前验证基准为 `0.2.2-rc.1`，另有 `0.2.0-rc.1`、`0.1.7-rc.2` 兼容验证记录；peer 仅 `@deepseek-ai/cordis@^4.0.2`
 - 模型目录只在「尚不存在」时由登录成功兜底填充一次，填充后归用户所有：账号新增的模型不会自动出现——pi-ai 内置目录已描述的模型在 Models 页手动添加即可
 - 模型目录只写入 pi-ai 内置目录已描述的模型：目录快照外的新模型需随 DSH 升级获得
 
@@ -120,17 +120,17 @@ npm pack --dry-run
 
 ## 版本号规则
 
-版本号采用 semver 预发布后缀同时表达「插件自身版本」与「实测适配的 DSH 版本」：
+版本号采用 semver 预发布格式：`<插件核心版本>-dsh-<最近一次验证所基于的 DSH 版本>`。`-dsh-` 后的版本仅表示验证基准，不代表最低支持版本，也不代表插件只支持该版本。
 
 ```
 <插件核心版本>-dsh-<实测适配的 DSH 版本>
-   0.1.2            0.2.0-rc.1
+   0.1.3            0.2.2-rc.1
 ```
 
-- 例：`0.1.2-dsh-0.2.0-rc.1` 表示插件 0.1.2，实测适配 DSH desktop `0.2.0-rc.1`（即当前最低支持版本；0.1.7-rc.2 实测亦兼容）；
+- 当前版本 `0.1.3-dsh-0.2.2-rc.1` 表示插件核心版本为 `0.1.3`，最近一次验证基于 DSH desktop `0.2.2-rc.1`；另有 `0.2.0-rc.1`、`0.1.7-rc.2` 兼容验证记录。该后缀不构成最低版本要求；
 - **插件功能发版**：bump 核心号（patch/minor），后缀保持当前适配的 DSH 版本；
-- **DSH 升级后重新实测适配**：bump 核心号并替换后缀，如 `0.2.0-dsh-0.1.8`；
-- git tag 与之一致但带 `v` 前缀：`v0.1.2-dsh-0.2.0-rc.1`；
+- **基于新的 DSH 版本重新验证**：bump 核心号并替换后缀为新的验证基准；
+- git tag 与之一致但带 `v` 前缀：`v0.1.3-dsh-0.2.2-rc.1`；
 - 后缀版本号仍是合法 semver 预发布标识（每段仅含字母数字与连字符）。注意 npm 对预发布版本**要求显式 `--tag`**（CI 的 release.yml 与手工发布均带 `--tag latest`），显式挂到 `latest` 后 `dsh plugin add dsh-github-copilot-accounts` 按 dist-tag 安装即可正常获取该版本；仅 `^x.y.z` 形式的版本范围不会匹配预发布号，这不影响插件安装方式。
 
 ## 维护者发布

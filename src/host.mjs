@@ -7,7 +7,7 @@
 //     key；pi-ai 请求路径只读主 key）；
 //   - 用量展示（copilot_internal/user，access 过期/401 先刷新一次）。
 // 登录成功/激活后把账号可用模型兜底填充为该路由的模型目录（目录保护不变）。
-// 不提供模型目录手动刷新：桌面版（0.2.0-rc.1）pi-ai 目录位于只读 app.asar 内，
+// 不提供模型目录手动刷新：桌面版（0.2.2-rc.1）pi-ai 目录位于只读 app.asar 内，
 // 数据级目录补丁无法写入；上游新模型随 DSH 升级获得。
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
