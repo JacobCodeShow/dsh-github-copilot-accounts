@@ -113,7 +113,7 @@ test("插件身份与路由注册", (t) => {
   assert.ok(ctx.routes.every((r) => r.kind === "exact"), "所有路由必须都是 exact");
   assert.deepEqual(ctx.routes.map((r) => r.path).sort(),
     ["/copilot-auth/accounts", "/copilot-auth/activate", "/copilot-auth/cancel", "/copilot-auth/debug",
-      "/copilot-auth/logout", "/copilot-auth/open", "/copilot-auth/profile", "/copilot-auth/refresh", "/copilot-auth/start",
+      "/copilot-auth/logout", "/copilot-auth/models", "/copilot-auth/open", "/copilot-auth/profile", "/copilot-auth/refresh", "/copilot-auth/start",
       "/copilot-auth/state", "/copilot-auth/whoami"]);
 });
 
@@ -214,13 +214,8 @@ test("登录成功建槽（身份入 payload.account）且 /accounts 标记激�
   assert.deepEqual(slot.payload.account, { login: "octocat", name: "Octo Cat", avatarUrl: "https://avatars.example/u.png", domain: "github.com" });
   const list = await call(handler(ctx, "/accounts"));
   assert.deepEqual(list.body.accounts, [{
-    id: accountKey("octocat", "github.com"),
-    login: "octocat",
-    name: "Octo Cat",
-    avatarUrl: "https://avatars.example/u.png",
-    domain: "github.com",
-    active: true,
-    plan: "Copilot Enterprise",
+    id: accountKey("octocat", "github.com"), login: "octocat", name: "Octo Cat", avatarUrl: "https://avatars.example/u.png",
+    domain: "github.com", active: true, plan: "Copilot Enterprise",
     usage: { percentUsed: 66, entitlement: 1000, remaining: 660, unlimited: false, resets: "2026-10-01" },
   }]);
   assert.equal(list.body.accounts[0].usageError, undefined);
@@ -337,7 +332,7 @@ test("用量缓存：TTL 内重复拉列表不再发起用量请求；失败降�
   });
   await call(handler(ctx, "/accounts"));
   const first = (await call(handler(ctx, "/accounts"))).body.accounts[0];
-  assert.match(first.usageError, /usage 503/);
+  assert.equal(first.usageError, "usage is unavailable");
   assert.equal(first.usage, undefined);
   assert.equal(ctx.fetchCalls.filter((c) => c.url.includes("copilot_internal/user")).length, 1, "TTL 内不重复请求");
 });
@@ -391,7 +386,7 @@ test("模型同步失败时经 /accounts 暴露 syncError", async (t) => {
   await call(handler(ctx, "/start"), { method: "POST", body: { kind: "github.com" } });
   await sleep();
   const res = await call(handler(ctx, "/accounts"));
-  assert.equal(res.body.syncError, "validation boom");
+  assert.equal(res.body.syncError, "model catalog sync failed");
 });
 
 const grant = (domain, refresh, login = "alice") => ({
@@ -888,6 +883,115 @@ test("同 grant 登录后旧资料请求的 generation 失效，不覆盖更新�
   assert.equal(ctx.credentials.records.get(id).payload.account.avatarUrl, "https://company-a.ghe.com/new.jpg");
   assert.equal((await postProfile(ctx, id)).body.avatarUrl, "https://company-a.ghe.com/new.jpg");
   assert.equal(identityCalls(ctx).length, 2);
+});
+
+test("缺失可选头像时资料仍通过严格 JSON 凭据校验并清除旧地址", async (t) => {
+  const domain = "company-a.ghe.com", id = accountKey("alice", domain);
+  const a = grant(domain, "ra"); a.payload.account.avatarUrl = "https://example.invalid/old";
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [id]: a }, fetchImpl: (url) => new URL(url).pathname === "/user"
+    ? { ok: true, json: async () => ({ login: "alice", name: "Alice" }) } : usageResponse() });
+  const modify = ctx.credentials.modifyRecord.bind(ctx.credentials);
+  ctx.credentials.modifyRecord = (key, mutate) => modify(key, async (current) => {
+    const next = await mutate(current);
+    if (next?.kind === "grant") assert.deepEqual(next.payload, JSON.parse(JSON.stringify(next.payload)), "stored payload must be losslessly JSON representable");
+    return next;
+  });
+  assert.equal((await postProfile(ctx, id)).code, 200);
+  assert.equal(Object.hasOwn(ctx.credentials.records.get(id).payload.account, "avatarUrl"), false);
+  assert.equal((await call(handler(ctx, "/accounts"))).body.accounts[0].avatarUrl, undefined);
+});
+
+test("原生登录仍在提交时，删除和全局默认变更被明确拒绝", async (t) => {
+  const a = grant("github.com", "ra"), id = "copilot-auth/account-alice";
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [id]: a }, hang: true });
+  await call(handler(ctx, "/start"), { method: "POST", body: { kind: "github.com" } });
+  assert.equal((await call(handler(ctx, "/activate"), { method: "POST", body: { id } })).code, 409);
+  assert.equal((await call(handler(ctx, "/logout"), { method: "POST", body: { id } })).code, 409);
+  assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, "ra");
+  assert.equal(ctx.credentials.records.has(id), true);
+});
+
+test("全局选择与删除串行，删除旧账号不会清掉新默认", async (t) => {
+  const a = grant("github.com", "ra"), b = grant("github.com", "rb", "bob");
+  const idA = "copilot-auth/account-alice", idB = "copilot-auth/account-bob";
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [idA]: a, [idB]: b } });
+  let release, notify, held = false;
+  const started = new Promise((resolve) => { notify = resolve; });
+  const modify = ctx.credentials.modifyRecord.bind(ctx.credentials);
+  ctx.credentials.modifyRecord = async (key, mutate) => {
+    if (key === MAIN && !held) { held = true; await new Promise((resolve) => { release = resolve; notify(); }); }
+    return modify(key, mutate);
+  };
+  const choose = call(handler(ctx, "/activate"), { method: "POST", body: { id: idB } });
+  await started;
+  const remove = call(handler(ctx, "/logout"), { method: "POST", body: { id: idA } });
+  release();
+  assert.equal((await choose).code, 200);
+  assert.equal((await remove).code, 200);
+  assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, "rb");
+  assert.equal(ctx.credentials.records.has(idA), false);
+  assert.equal(ctx.credentials.records.has(idB), true);
+});
+
+test("全局写锁内复核已删除的目标，不能复活旧授权", async (t) => {
+  const a = grant("github.com", "ra"), b = grant("github.com", "rb", "bob");
+  const idA = "copilot-auth/account-alice", idB = "copilot-auth/account-bob";
+  const ctx = makeCtx(t, { records: { [MAIN]: b, [idA]: a, [idB]: b } });
+  const modify = ctx.credentials.modifyRecord.bind(ctx.credentials);
+  ctx.credentials.modifyRecord = async (key, mutate) => {
+    if (key === MAIN) ctx.credentials.records.delete(idA);
+    return modify(key, mutate);
+  };
+  assert.equal((await call(handler(ctx, "/activate"), { method: "POST", body: { id: idA } })).code, 409);
+  assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, "rb");
+});
+
+test("显式默认选择产生非秘密代际标识，不改写账号槽位授权", async (t) => {
+  const a = grant("github.com", "ra"), id = "copilot-auth/account-alice";
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [id]: a } });
+  await call(handler(ctx, "/activate"), { method: "POST", body: { id } });
+  const first = ctx.credentials.records.get(MAIN).payload.copilotDefaultEpoch;
+  await call(handler(ctx, "/activate"), { method: "POST", body: { id } });
+  const second = ctx.credentials.records.get(MAIN).payload.copilotDefaultEpoch;
+  assert.match(first, /^[a-f0-9-]{36}$/);
+  assert.notEqual(first, second);
+  assert.equal(ctx.credentials.records.get(id).payload.copilotDefaultEpoch, undefined);
+  assert.equal(ctx.credentials.records.get(MAIN).payload.refresh, "ra");
+});
+
+test("未知凭据和网络异常不进入日志或账号 API 响应", async (t) => {
+  const marker = "PRIVATE_DIAGNOSTIC_SENTINEL", a = grant("github.com", "ra"), id = "copilot-auth/account-alice";
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [id]: a }, fetchImpl: () => { throw new Error(marker); } });
+  const list = await call(handler(ctx, "/accounts"));
+  assert.ok(!JSON.stringify(list.body).includes(marker));
+  await call(handler(ctx, "/activate"), { method: "POST", body: { id } });
+  await sleep();
+  assert.ok(!JSON.stringify(ctx.logger.warns).includes(marker));
+  ctx.credentials.listRecords = async () => { throw new Error(marker); };
+  const activate = await call(handler(ctx, "/activate"), { method: "POST", body: { id } });
+  assert.equal(activate.code, 500);
+  assert.ok(!JSON.stringify(activate.body).includes(marker));
+  const identity = await call(handler(ctx, "/whoami"));
+  assert.ok(!JSON.stringify(identity.body).includes(marker));
+});
+
+test("手动模型刷新仅接受账号槽位且未挂载会话功能时安全拒绝", async (t) => {
+  const id = "copilot-auth/account-alice", a = grant("github.com", "ra");
+  const ctx = makeCtx(t, { records: { [MAIN]: a, [id]: a } });
+  assert.equal((await call(handler(ctx, "/models"), { method: "POST", body: {} })).code, 400);
+  assert.equal((await call(handler(ctx, "/models"), { method: "POST", body: { id: "copilot-auth/account-missing" } })).code, 404);
+  const unavailable = await call(handler(ctx, "/models"), { method: "POST", body: { id } });
+  assert.equal(unavailable.code, 503);
+  assert.equal(unavailable.body.error, "model refresh unavailable");
+  assert.equal(ctx.fetchCalls.length, 0, "unavailable feature must not make a model request");
+});
+
+test("外部链接接口在 OS 调用前拒绝注入、非 GitHub 及错误方法", async (t) => {
+  const ctx = makeCtx(t);
+  for (const url of ['https://github.com/"&echo PRIVATE', "https://evil.invalid", "http://github.com", "file:///x"]) {
+    assert.equal((await call(handler(ctx, "/open"), { method: "POST", body: { url } })).code, 400);
+  }
+  assert.equal((await call(handler(ctx, "/open"), { method: "GET" })).code, 405);
 });
 
 test("跨站 Origin 拒绝 403，同源/无 Origin 放行", async (t) => {

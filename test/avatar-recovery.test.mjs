@@ -199,3 +199,62 @@ test("request failures, malformed responses and invalid ids reject safely and cl
     assert.equal(calls, 2);
   }
 });
+
+test("same avatar id and URL on another Host invalidates the old recovery response", async () => {
+  const old = deferred();
+  const recovery = createAvatarRecovery(() => assert.fail("must not fall back to global requester"));
+  const a = {}, b = {};
+  recovery.configure("same-id", oldUrl, {scopeKey:a,requestProfile:()=>old.promise});
+  let synced = 0;
+  const pending = recovery.fail(recovery.snapshot().revision,()=>{synced++;});
+  recovery.configure("same-id", oldUrl, {scopeKey:b,requestProfile:async()=>newUrl});
+  const state = recovery.snapshot();
+  old.resolve("https://old-host/private-avatar");await pending;
+  assert.deepEqual(recovery.snapshot(),state);
+  assert.equal(synced,0);
+  await recovery.fail(recovery.snapshot().revision);
+  assert.equal(recovery.snapshot().source,newUrl);
+});
+
+test("explicit unavailable scoped requester never invokes settings global REST fallback", async () => {
+  let globals = 0;
+  const recovery = createAvatarRecovery(async()=>{globals++;return newUrl;});
+  recovery.configure("id",oldUrl,{scopeKey:{},requestProfile:undefined});
+  await recovery.fail(recovery.snapshot().revision);
+  assert.equal(globals,0);
+  assert.equal(recovery.snapshot().failed,true);
+});
+
+test("retired Host guard rejects late recovery even before scope props reconfigure", async () => {
+  const old = deferred();let current=true,synced=0,requests=0;
+  const recovery=createAvatarRecovery(()=>assert.fail("global request forbidden"));
+  recovery.configure("id",oldUrl,{scopeKey:{},isCurrent:()=>current,requestProfile:()=>{requests++;return old.promise;}});
+  const pending=recovery.fail(recovery.snapshot().revision,()=>{synced++;});
+  current=false;
+  const before=recovery.snapshot();
+  old.resolve("https://retired-host/avatar");await pending;
+  assert.deepEqual(recovery.snapshot(),before);assert.equal(synced,0);
+  await recovery.fail(recovery.snapshot().revision);
+  assert.equal(requests,1);
+});
+
+test("recovered callback receives the unchanged opaque source for one explicit pooled retry", async () => {
+  const next="https://fake.ghe.invalid/opaque-recovered";let calls=0,received;
+  const recovery=createAvatarRecovery(async()=>{calls++;return next;});
+  recovery.configure("id",oldUrl);
+  await recovery.fail(recovery.snapshot().revision,(source)=>{received=source;});
+  assert.equal(received,next);assert.equal(calls,1);
+  await recovery.fail(recovery.snapshot().revision,()=>assert.fail("second recovery must not happen"));
+  assert.equal(calls,1);
+});
+
+test("scoped parent catch-up and requester identity changes do not reset one-shot budget", async () => {
+  const scopeKey = {};let requests = 0;
+  const recovery = createAvatarRecovery(()=>assert.fail("global request forbidden"));
+  recovery.configure("id",oldUrl,{scopeKey,requestProfile:async()=>{requests++;return newUrl;}});
+  await recovery.fail(recovery.snapshot().revision);
+  recovery.configure("id",newUrl,{scopeKey,requestProfile:async()=>{requests++;return newUrl;}});
+  await recovery.fail(recovery.snapshot().revision);
+  assert.equal(recovery.snapshot().failed,true);
+  assert.equal(requests,1);
+});

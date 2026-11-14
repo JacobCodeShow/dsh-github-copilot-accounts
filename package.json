@@ -1,7 +1,7 @@
 {
   "name": "dsh-github-copilot-accounts",
-  "version": "0.1.2-dsh-0.2.0-rc.1",
-  "description": "GitHub Copilot 多账号管理：设备码登录（支持 github.com 与 GHE 企业版）、多账号一键切换、额度与 Token 用量展示。",
+  "version": "0.3.5-dsh-0.2.2-rc.1",
+  "description": "GitHub Copilot 多账号与会话绑定：设备码登录、全局默认与会话账号隔离、额度展示及续接状态保护。",
   "type": "module",
   "license": "MIT",
   "author": "JacobCodeShow",
@@ -13,11 +13,11 @@
   "exports": {
     ".": "./src/host.mjs",
     "./client": "./lib/client.js",
+    "./default-model": "./src/default-model.mjs",
     "./package.json": "./package.json"
   },
   "files": [
-    "src/host.mjs",
-    "src/shared.mjs",
+    "src/*.mjs",
     "lib/client.js",
     "cordis.patch.yml",
     "README.md",
@@ -26,13 +26,15 @@
   "scripts": {
     "build": "node scripts/build-client.mjs",
     "test": "node --test",
+    "test:ui": "node scripts/validate-session-ui.mjs",
     "prepack": "npm run build"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": "^0.2.2-rc.1"
   },
   "peerDependencies": {
-    "@deepseek-ai/cordis": "^4.0.2"
+    "@deepseek-ai/cordis": "~4.1.0"
   },
   "devDependencies": {
     "esbuild": "^0.24.0",

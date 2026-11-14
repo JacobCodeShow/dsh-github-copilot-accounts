@@ -26,21 +26,26 @@ export const requestAvatarProfile = createProfileRequester();
 // never publishes. generation invalidates promises; revision invalidates events
 // from the previous <img> and forces one remount even if the URL is unchanged.
 export function createAvatarRecovery(requestProfile = requestAvatarProfile) {
-  let id, inputSource, source, failed = false, attempted = false;
+  let id, inputSource, source, scopeKey, requester = requestProfile, failed = false, attempted = false;
   let generation = 0, revision = 0, mounted = true;
-  let recoveredSource;
+  let recoveredSource, scopeIsCurrent = () => true;
+  const validScope = () => { try { return scopeIsCurrent() === true; } catch { return false; } };
   const listeners = new Set();
   const publish = () => { for (const listener of listeners) listener(); };
   const snapshot = () => ({ source, failed, revision });
   return {
-    configure(nextId, nextSource) {
-      if (id === nextId && inputSource === nextSource) return;
-      // Parent GET catches up to our successful refresh: keep the retry budget.
-      if (id === nextId && attempted && recoveredSource !== undefined && nextSource === recoveredSource) {
+    configure(nextId, nextSource, options) {
+      const nextScope = options?.scopeKey;
+      scopeIsCurrent = typeof options?.isCurrent === "function" ? options.isCurrent : () => true;
+      requester = options !== undefined && Object.hasOwn(options, "requestProfile") ? options.requestProfile : requestProfile;
+      if (scopeKey === nextScope && id === nextId && inputSource === nextSource) return;
+      // Parent GET catches up within this exact Host/Session scope: keep budget.
+      if (scopeKey === nextScope && id === nextId && attempted && recoveredSource !== undefined && nextSource === recoveredSource) {
         inputSource = nextSource;
         return;
       }
       id = nextId;
+      scopeKey = nextScope;
       inputSource = source = nextSource;
       recoveredSource = undefined;
       failed = attempted = false;
@@ -52,15 +57,16 @@ export function createAvatarRecovery(requestProfile = requestAvatarProfile) {
     mount() { if (!mounted) { mounted = true; publish(); } },
     unmount() { mounted = false; generation++; revision++; },
     async fail(imageRevision, onRecovered) {
-      if (!mounted || imageRevision !== revision) return;
+      if (!mounted || imageRevision !== revision || !validScope()) return;
       failed = true;
       publish();
-      if (attempted || typeof id !== "string" || id === "" || !source) return;
+      if (attempted || typeof id !== "string" || id === "" || !source || typeof requester !== "function") return;
       attempted = true;
       const currentGeneration = generation;
+      const request = requester;
       try {
-        const nextSource = await requestProfile(id);
-        if (!mounted || generation !== currentGeneration) return;
+        const nextSource = await request(id);
+        if (!mounted || generation !== currentGeneration || !validScope()) return;
         if (nextSource !== undefined) {
           source = recoveredSource = nextSource;
           revision++;
@@ -69,7 +75,7 @@ export function createAvatarRecovery(requestProfile = requestAvatarProfile) {
         }
         // Parent synchronization must not itself start another image recovery.
         // It can be async; absorb failures without logging URLs or response text.
-        try { Promise.resolve(onRecovered?.()).catch(() => {}); } catch { /* fallback is already safe */ }
+        try { Promise.resolve(onRecovered?.(nextSource)).catch(() => {}); } catch { /* fallback is already safe */ }
       } catch {
         // Leave the initial-letter fallback; errors may contain sensitive URLs.
       }

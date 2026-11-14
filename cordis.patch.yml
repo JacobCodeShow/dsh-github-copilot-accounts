@@ -1,16 +1,24 @@
-# DSH 0.1.7-rc.2 适配（2026-09-25）；0.2.0-rc.1 实测可用（2026-09-29）：
-# 0.1.7 内置组合已挂载 authorization 服务（dsh-base 0.1.7-rc.2 依赖
-# @deepseek-ai/dsh-authorization；dsh-llm-pi-ai 挂载时无条件为每个
-# catalog provider 注册 llm-pi-ai/<provider> 授权 flow），无需再挂
-# copilot-authorization。旧版（≤0.1.2-rc.1）内置 bundle 未挂载该服务，
-# 曾需要那一行；在 0.1.7 上重复挂载会报：
-#   service "authorization" has been registered → 该条目激活失败。
+# Session accounts target DSH 0.2.2-rc.1 / Cordis 4.1.
+# OAuth uses the built-in authorization service; never mount a duplicate.
+# Install/update/policy removal requires a full DSH restart.
 - insert:
     # 本插件 host 半区（有 webServer 服务的环境激活：web 树 / desktop）
     # 路由前缀固定 /copilot-auth、不做配置项：client 侧 fetch 硬编码同一路径，
     # 配置一旦漂移 client 即 404。
     - id: copilot-auth
       name: 'dsh-github-copilot-accounts'
+    - id: copilot-default-model-policy
+      name: 'dsh-github-copilot-accounts/default-model'
+      isolate:
+        agentDefaultModel: copilot-session-default-model
+        llm: copilot-session-llm
+# Only the Session controller sees policy/catalog facades. Original global
+# services, configuration entries and native protocol implementations stay intact.
+- id: session-controller
+  name: '@deepseek-ai/dsh-api-session-controller'
+  isolate:
+    agentDefaultModel: copilot-session-default-model
+    llm: copilot-session-llm
 # 预置 GitHub Copilot 路由：entry config 作为 settings base 层，
 # 用户 settings.yaml 的 llm-pi-ai: 节逐字段递归覆盖其上。
 # 不写 apiKeyEnv → 认证走 OAuth 凭据记录（llm-pi-ai/github-copilot）。
