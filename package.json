@@ -18,6 +18,7 @@
   "files": [
     "src/host.mjs",
     "src/shared.mjs",
+    "src/account-config.mjs",
     "lib/client.js",
     "cordis.patch.yml",
     "README.md",
@@ -29,7 +30,8 @@
     "prepack": "npm run build"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20",
+    "dsh": "^0.2.2-rc.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2"

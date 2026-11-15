@@ -1,6 +1,6 @@
 # dsh-github-copilot-accounts
 
-为 DSH（DeepSeek Harness）**桌面版**提供 GitHub Copilot **多账号管理**：设备码登录、多账号一键切换、额度与用量展示，并预置一条开箱即用的 GitHub Copilot 提供方路由。当前验证基准为 `DSH 0.2.2-rc.1 desktop`；另有 `0.2.0-rc.1` 与 `0.1.7-rc.2` 兼容验证记录。
+为 DSH（DeepSeek Harness）**桌面版**提供 GitHub Copilot **多账号管理**：设备码登录、多账号一键切换、额度与用量展示，并预置一条开箱即用的 GitHub Copilot 提供方路由。此分支使用 `DSH 0.2.2-rc.1` 的 Settings/ConfigEditor 接口；以前版本的兼容记录不适用于这次接口改动。
 
 ## 这是什么
 
@@ -21,7 +21,7 @@
 
 ## 前置要求与验证版本
 
-- 当前验证基准：DSH desktop `0.2.2-rc.1`。版本号后缀仅表示最近一次验证所基于的版本，不代表最低支持版本；其他版本的兼容性以实际验证记录为准
+- 本分支要求 DSH `^0.2.2-rc.1`，验证目标为 desktop `0.2.2-rc.1`。配置保护依赖公开 Settings/ConfigEditor 接口；其他符合版本范围的版本仍需实际验证。
 - 有效的 GitHub Copilot 订阅（个人账号或企业组织账号均可，SSO 登录）
 - `pnpm` 可用（`dsh plugin` 是 pnpm 转发器）
 
