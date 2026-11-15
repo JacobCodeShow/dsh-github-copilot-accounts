@@ -447,6 +447,23 @@ const grant = (domain, refresh, login = "alice") => ({
   kind: "grant", payload: { type: "oauth", refresh, access: `access-${refresh}`, expires: Date.now() + 3_600_000,
     ...(domain === "github.com" ? {} : { enterpriseUrl: domain }), account: { login, domain } },
 });
+test("whoami preserves the unlimited flag without requiring extra quota requests", async (t) => {
+  const record = grant("github.com", "FAKE"), id = accountKey("alice", "github.com");
+  const ctx = makeCtx(t, { records: { [MAIN]: record, [id]: record }, fetchImpl: () => ({ ok: true, json: async () => ({ copilot_plan: "enterprise", quota_snapshots: { premium_interactions: { unlimited: true, percent_remaining: 100 } } }) }) });
+  const who = await call(handler(ctx, "/whoami"));
+  assert.equal(who.body.usageUnlimited, true);
+  const accounts = await call(handler(ctx, "/accounts"));
+  assert.equal(accounts.body.accounts[0].usage.unlimited, true);
+  assert.equal(ctx.fetchCalls.filter(c => c.url.includes("copilot_internal/user")).length, 1);
+});
+test("failed quota lookup does not report an unlimited or zero-used balance", async (t) => {
+  const record = grant("github.com", "FAKE"), id = accountKey("alice", "github.com");
+  const ctx = makeCtx(t, { records: { [MAIN]: record, [id]: record } });
+  const who = await call(handler(ctx, "/whoami"));
+  assert.equal(who.body.usageUnlimited, null);
+  assert.equal(who.body.usagePercent, null);
+});
+
 const multiFetch = (url, init) => {
   if (url.includes("copilot_internal/v2/token")) return {
     ok: true, json: async () => ({ token: `fresh-${new URL(url).hostname}`, expires_at: Date.now() / 1000 + 3600 }),

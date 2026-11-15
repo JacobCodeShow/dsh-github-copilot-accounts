@@ -73,7 +73,8 @@ const DICTS = {
     badgeUsage: "Usage",
     badgeUsed: "used",
     badgeResets: "resets",
-    badgeQuotaRemaining: "Quota left",
+    quotaUsed: "{percent}% used",
+    quotaUnknown: "Usage unavailable",
   },
   zh: {
     nav: "Copilot 账号",
@@ -134,7 +135,8 @@ const DICTS = {
     badgeUsage: "额度",
     badgeUsed: "已使用",
     badgeResets: "重置",
-    badgeQuotaRemaining: "剩余额度",
+    quotaUsed: "已用 {percent}%",
+    quotaUnknown: "用量不可用",
   },
 };
 
@@ -323,13 +325,28 @@ function Avatar({ src, name, size = 36 }) {
   );
 }
 
+// One display convention for settings, collapsed badge and expanded panel.
+// Unlimited is not 0% used; only drawing is clamped for over-quota readings.
+function usedQuota(usage) {
+  if (usage?.unlimited === true) return { kind: "unlimited", percent: null, high: false };
+  const percent = usage?.percentUsed;
+  if (!Number.isFinite(percent) || percent < 0) return { kind: "unknown", percent: null, high: false };
+  const rounded = Math.round(percent);
+  return { kind: "percent", percent, rounded, high: rounded > 80, fill: Math.min(100, percent) };
+}
+function quotaText(quota, t) {
+  return quota.kind === "percent" ? t("quotaUsed").replace("{percent}", String(quota.rounded))
+    : quota.kind === "unlimited" ? t("unlimited") : t("quotaUnknown");
+}
+
 // Plan + AI credits 块：plan / 进度条 / 重置日期全部缺字段即隐藏对应元素。
 function UsageBlock({ t, plan, usage, usageError }) {
   if (usageError) {
     return <p style={styles.muted}>{t("usageFailed")}：{usageError}</p>;
   }
   if (!plan && !usage) return null;
-  const percent = usage?.unlimited ? undefined : usage?.percentUsed;
+  const quota = usedQuota(usage);
+  const label = quotaText(quota, t);
   return (
     <div style={styles.planBlock}>
       {plan !== undefined && (
@@ -338,15 +355,15 @@ function UsageBlock({ t, plan, usage, usageError }) {
           <div style={styles.planValue}>{plan}</div>
         </>
       )}
-      {usage?.unlimited === true && <div style={styles.muted}>{t("unlimited")}</div>}
-      {typeof percent === "number" && (
+      {quota.kind !== "percent" && <div style={styles.muted}>{label}</div>}
+      {quota.kind === "percent" && (
         <>
           <div style={styles.creditsRow}>
             <span>{t("credits")}</span>
-            <span>{Math.round(percent)}%</span>
+            <span>{label}</span>
           </div>
-          <div style={styles.barTrack}>
-            <div style={{ ...styles.barFill, width: `${Math.min(100, Math.max(0, percent))}%` }} />
+          <div style={styles.barTrack} role="img" aria-label={label}>
+            <div style={{ ...styles.barFill, width: `${quota.fill}%`, ...(quota.high ? { background: "#e03131" } : {}) }} />
           </div>
         </>
       )}
@@ -1031,12 +1048,8 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
   };
 
   const badgeOpacity = whoami?.configured ? 1 : 0.5;
-  // 剩余额度 = 100 - 已用百分比（进度条 >80% 变红，对应剩余 <20%）。
-  // Math.round 消除浮点误差（100 - 69.2 = 30.799999...）。
-  const used = whoami?.usagePercent;
-  const quotaRemaining = typeof used === "number"
-    ? Math.round(Math.max(0, Math.min(100, 100 - used))) : null;
-  const lowQuota = quotaRemaining !== null && quotaRemaining < 20;
+  const quota = usedQuota({ percentUsed: whoami?.usagePercent, unlimited: whoami?.usageUnlimited });
+  const usageLabel = quotaText(quota, t);
 
   if (!whoami) {
     return (
@@ -1059,7 +1072,7 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
 
   const badgeTitle = [
     whoami.login,
-    quotaRemaining !== null && `${t("badgeQuotaRemaining")} ${quotaRemaining}%`,
+    usageLabel,
   ].filter(Boolean).join(" · ") || undefined;
 
   // 弹窗用 position: fixed 渲染到根堆叠上下文，避免被侧边栏（Files 面板）
@@ -1079,12 +1092,9 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
     <div style={{ position: "relative", flex: "none" }} ref={badgeRef}>
       <span className="copilot-badge" title={badgeTitle} onClick={() => setOpen((v) => !v)}>
         <span dangerouslySetInnerHTML={{ __html: BADGE_COPILOT_SVG }} />
-        {/* logo 后只显示剩余额度百分比 */}
-        {quotaRemaining !== null && (
-          <span className="copilot-badge-label" style={lowQuota ? { color: "#e03131" } : undefined}>
-            {quotaRemaining}%
-          </span>
-        )}
+        <span className="copilot-badge-label" style={quota.high ? { color: "#e03131" } : undefined}>
+          {usageLabel}
+        </span>
       </span>
       {open && createPortal(
         <>
@@ -1118,25 +1128,22 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
               </button>
             </div>
             {/* 用量区 */}
-            {whoami.usagePercent !== null && whoami.usagePercent !== undefined && (
-              <div style={{ padding: "10px 12px" }}>
+            <div style={{ padding: "10px 12px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6, opacity: 0.7 }}>
                   <span>{t("badgeUsage")}</span>
                   {whoami.usageResetDate && <span>{t("badgeResets")} {whoami.usageResetDate}</span>}
                 </div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 6 }}>
-                  <span style={{ fontSize: 20, fontWeight: 700 }}>{whoami.usagePercent}%</span>
-                  <span style={{ fontSize: 12, opacity: 0.6 }}>{t("badgeUsed")}</span>
+                  <span style={{ fontSize: 20, fontWeight: 700 }}>{usageLabel}</span>
                 </div>
-                <div style={{ height: 4, background: "rgba(128,128,128,0.2)", borderRadius: 2, overflow: "hidden" }}>
+                {quota.kind === "percent" && <div role="img" aria-label={usageLabel} style={{ height: 4, background: "rgba(128,128,128,0.2)", borderRadius: 2, overflow: "hidden" }}>
                   <div style={{
-                    height: "100%", width: `${whoami.usagePercent}%`,
-                    background: whoami.usagePercent > 80 ? "#e03131" : "#4c6ef5",
+                    height: "100%", width: `${quota.fill}%`,
+                    background: quota.high ? "#e03131" : "#4c6ef5",
                     borderRadius: 2,
                   }} />
-                </div>
-              </div>
-            )}
+                </div>}
+            </div>
             {/* 身份行：当前账号头像 + 用户名。
                 排版与下方账号切换列表行一致（18px 圆头像、13px 文字、gap 8）。 */}
             <div style={{
