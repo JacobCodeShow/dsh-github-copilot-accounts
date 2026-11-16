@@ -75,6 +75,8 @@ const DICTS = {
     badgeUsed: "used",
     badgeResets: "resets",
     badgeQuotaRemaining: "Quota left",
+    badgeGlobalDefault: "Global default",
+    badgeGlobalHint: "Global account only; this is not the account bound to this Session.",
   },
   zh: {
     nav: "Copilot 账号",
@@ -136,6 +138,8 @@ const DICTS = {
     badgeUsed: "已使用",
     badgeResets: "重置",
     badgeQuotaRemaining: "剩余额度",
+    badgeGlobalDefault: "全局默认",
+    badgeGlobalHint: "仅显示和切换全局账号，不代表当前会话绑定账号。",
   },
 };
 
@@ -1082,6 +1086,7 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
   }
 
   const badgeTitle = [
+    t("badgeGlobalHint"),
     whoami.login,
     quotaRemaining !== null && `${t("badgeQuotaRemaining")} ${quotaRemaining}%`,
   ].filter(Boolean).join(" · ") || undefined;
@@ -1103,6 +1108,7 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
     <div style={{ position: "relative", flex: "none" }} ref={badgeRef}>
       <span className="copilot-badge" title={badgeTitle} onClick={() => setOpen((v) => !v)}>
         <span dangerouslySetInnerHTML={{ __html: BADGE_COPILOT_SVG }} />
+        <span>{t("badgeGlobalDefault")}</span>
         {/* logo 后只显示剩余额度百分比 */}
         {quotaRemaining !== null && (
           <span className="copilot-badge-label" style={lowQuota ? { color: "#e03131" } : undefined}>
