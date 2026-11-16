@@ -15,6 +15,7 @@ PR #4 在原有账号管理基础上添加 **按原生 DSH Session 独立选择 
 **此 PR 不包含新的会话账号菜单、紧凑用量布局、合计、UTC 游标、原生头像资源池或手动刷新模型按钮。** 当前客户端仍以原有账号管理界面为主；底部徽标明确标为“全局默认”，其账号切换动作改变的是全局默认，不是专属 Session 绑定。专用会话 UI 将由后续 PR 提供。
 
 相关讨论：
+- 📊 设置页、底部徽标和展开面板统一显示额度**已用**比例；无限额度和未知用量不伪造百分比。
 
 - [#3：Session 账号路由与切换](https://github.com/JacobCodeShow/dsh-github-copilot-accounts/issues/3)
 - [#5：GHE 头像资料刷新和失败恢复](https://github.com/JacobCodeShow/dsh-github-copilot-accounts/issues/5)

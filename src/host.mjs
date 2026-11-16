@@ -922,7 +922,7 @@ export function apply(ctx) {
         // 失败也写 cache 避免频繁打网络）。summarizeUsage 返回
         // { plan, usage: { percentUsed, resets, ... } } 或 { error }。
         let id = null, login = null, avatarUrl = null;
-        let plan = null, usagePercent = null, usageResetDate = null;
+        let plan = null, usagePercent = null, usageResetDate = null, usageUnlimited = null;
         try {
           const slots = await listAccountSlots(ctx);
           const match = slots.find((s) => sameGrant(s.payload, p));
@@ -937,6 +937,7 @@ export function apply(ctx) {
             if (u && u.error === undefined) {
               plan = u.plan ?? null;
               const usage = u.usage;
+              if (typeof usage?.unlimited === "boolean") usageUnlimited = usage.unlimited;
               if (usage && typeof usage.percentUsed === "number") {
                 // 取整避免浮点误差（上游 69.200000...% 直接透传会显示长串小数）。
                 usagePercent = Math.round(usage.percentUsed);
@@ -957,6 +958,7 @@ export function apply(ctx) {
           expires,
           remaining,
           usagePercent,
+          usageUnlimited,
           usageResetDate,
         });
       } catch {
