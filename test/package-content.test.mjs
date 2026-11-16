@@ -8,10 +8,12 @@ const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 
 test("every published Host relative import is present in the package allowlist", () => {
   const included = new Set(pkg.files);
+  const isIncluded = (name) => included.has(name)
+    || included.has("src/*.mjs") && name.startsWith("src/") && name.endsWith(".mjs");
   const visit = (name, visited = new Set()) => {
     if (visited.has(name)) return;
     visited.add(name);
-    assert.ok(included.has(name), "Host dependency is not packaged: " + name);
+    assert.ok(isIncluded(name), "Host dependency is not packaged: " + name);
     assert.ok(existsSync(resolve(root, name)), "Host dependency does not exist: " + name);
     const code = readFileSync(resolve(root, name), "utf8");
     for (const match of code.matchAll(/(?:\bfrom\s*|\bimport\s*\()\s*["'](\.[^"']+)["']/g)) {

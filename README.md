@@ -1,81 +1,87 @@
 # dsh-github-copilot-accounts
 
-为 DSH（DeepSeek Harness）**桌面版**提供 GitHub Copilot **多账号管理**：设备码登录、多账号一键切换、额度与用量展示，并预置一条开箱即用的 GitHub Copilot 提供方路由。此分支使用 `DSH 0.2.2-rc.1` 的 Settings/ConfigEditor 接口；以前版本的兼容记录不适用于这次接口改动。
+为 DSH（DeepSeek Harness）**桌面版**提供 GitHub Copilot **多账号与会话账号绑定**：设备码登录、全局默认、多账号切换、按 Session 固定账号路由、套餐与当前用量展示。当前分支使用 `DSH 0.2.2-rc.1` 的 Settings/ConfigEditor 接口；以前版本的兼容记录不适用于这次接口改动。
 
-## 这是什么
+## 此分支的范围
 
-用 GitHub 账号（带 Copilot 订阅）登录 DSH 的方式，和其他 Copilot 客户端（VSCode 等）一致：**网页 + 设备码**，全程不填 API Token。支持 **GitHub.com** 与 **GitHub Enterprise Cloud（ghe.com 域名）** 两种账号，**多账号并存、单激活**，界面与交互对齐 GitHub Copilot desktop 的 Accounts 设置页。
+PR #4 在原有账号管理基础上添加 **按原生 DSH Session 独立选择 Copilot 账号的路由和 Remote 基础能力**：
 
-本插件**复用 DSH 内置通道**（pi-ai 的 github-copilot provider），不实现任何 GitHub 协议代码——token 自动轮换、模型发现、协议适配全部由内置实现负责。插件本身只做三件事：提供「账号管理」设置页（登录/切换/注销/用量）、维护多账号槽位、预置 `GitHub Copilot` 路由（授权服务由内置组合提供）。
+- 每个账号使用独立凭据映射，内部仍复用 DSH 的原生 `github-copilot` provider 和协议实现。
+- 固定账号路由与受管理的全局默认路由分离；会话选择不覆盖全局模型偏好。
+- 请求准备后固定账号；缺失、删除、禁用或不支持当前模型的账号明确失败，不换用其他账号。
+- provider replay、推理签名和传输 affinity 按实际账号隔离；切号不删除聊天或工具结果，也不静默重跑整轮/工具。
+- 恢复、普通 fork 和新原生子代理保留对应的会话选择边界；已有子代理不随父会话后续选择重绑。
+
+**此 PR 不包含新的会话账号菜单、原生头像资源池或手动刷新模型按钮。** 底部徽标明确标为“全局默认”，其账号切换动作改变的是全局默认，不是专属 Session 绑定；专用会话 UI 留待后续 PR。
 
 ## 特性
 
-- 🔐 **设备码登录/注销**：网页 + user code，免 API Token；SSO 组织授权友好
-- 👥 **多账号管理**：「添加账号」下拉支持 GitHub.com 与 GitHub Enterprise Cloud（输入 `company.ghe.com` 域名）两种入口；不同域名下的同名账号可独立并存，**Default 徽标**标记当前激活账号，… 菜单一键切换/注销；对话中的账号切换列表以单行 `domain/username` 显示账号（如 `github.com/alice`、`corpb.ghe.com/alice`），区分同名账号；过长标签省略显示，悬停可见完整内容
-- 📊 **用量展示**：每张账号卡显示套餐（Plan）与 AI credits 进度条（月度重置），数据来自 `copilot_internal/user`
-- 🧩 **预置提供方路由**：安装即出现在 Models 页，无需手动配置
-- 📦 **模型目录兜底填充**：登录成功/切换账号时，若 GitHub Copilot 路由还没有模型目录，自动填入账号可用模型（∩ 内置目录）；你已精简/定制过的目录**永不覆盖**（重启、重新登录均不重置）
-- 🌐 **中/英双语界面**：跟随 DSH 语言设置自动切换
-- 🔑 **凭据安全托管**：全部账号存入 DSH 内置凭据库（文件强制 0600 权限），Copilot 临时 token 到期自动刷新
-- 🧪 **测试与 CI**：单元测试覆盖登录、账号隔离、激活/注销与用量等行为；GitHub Actions 构建测试
+- 设备码登录与 GitHub.com / GitHub Enterprise Cloud 多账号管理；不同域名下的同名账号可独立并存。
+- Session 账号路由、受保护的 `copilotAccounts` Remote，以及按账号隔离的 OAuth 凭据和 replay。
+- 设置页、底部徽标及展开面板统一显示**已用**比例；无限额度和未知用量不伪造百分比。
+- 设置页按账号展示紧凑用量，并提供按账号百分比归一化的合计与 UTC 月进度参考。
+- 模型目录仅在用户未配置时兜底填充；已有自定义目录和 overrides 不覆盖。
+- 中英双语、凭据安全托管、头像失败后单次资料刷新。
 
-## 前置要求与验证版本
+## 相关讨论
 
-- 本分支要求 DSH `^0.2.2-rc.1`，验证目标为 desktop `0.2.2-rc.1`。配置保护依赖公开 Settings/ConfigEditor 接口；其他符合版本范围的版本仍需实际验证。
-- 有效的 GitHub Copilot 订阅（个人账号或企业组织账号均可，SSO 登录）
-- `pnpm` 可用（`dsh plugin` 是 pnpm 转发器）
+- [#3：Session 账号路由与切换](https://github.com/JacobCodeShow/dsh-github-copilot-accounts/issues/3)
+- [#5：GHE 头像资料刷新和失败恢复](https://github.com/JacobCodeShow/dsh-github-copilot-accounts/issues/5)
+- [#7：会话账号 UI、当前用量和头像复用](https://github.com/JacobCodeShow/dsh-github-copilot-accounts/issues/7)
+- [#8：手动模型刷新](https://github.com/JacobCodeShow/dsh-github-copilot-accounts/issues/8)
 
-## 安装
+## 设置页比较口径
 
-```bash
-dsh plugin add dsh-github-copilot-accounts
-```
+两个或以上账号才显示“合计已用”（例如 `100% / 200%`）。这是按每账号 100% 归一化相加的查看辅助，不是加权 AI credits 金额或独立／共享计费池的余额。缺失用量显示未知；无限额度不假装成有限的 100%。
 
-或从源码路径安装：
+黄色游标表示 UTC 日历月已经过的比例，仅供与当前用量对照，并非账号的实际计费周期、月末预测或历史趋势。数据仍来自现有账号接口，不新增请求或存储采样。
 
-```bash
-dsh plugin add /path/to/dsh-github-copilot-accounts
-```
+设置页与底部徽标展示的是全局账号信息；Session 专属账号选择目前通过 Host Remote/API 提供，会话账号菜单留待后续 UI 工作。头像沿用单次资料刷新与失败恢复，不代理图片，也不维护头像资源池。
 
-然后**重启 DSH desktop**。
+## 前置要求
 
-### 故障排查
+- 接口验证目标：DSH desktop `0.2.2-rc.1`、Cordis `4.1.x`；其他版本需要额外验证。
+- 有效的 GitHub Copilot 订阅。
+- DSH 的原生 OAuth、credentials 和普通原生 Session 服务。
 
-- 企业镜像/私有源环境下 pnpm 解析 peer 失败：`export npm_config_auto_install_peers=false` 后重试（profile 自带的 pnpm workspace 默认已关闭 peer 自动安装）。
-- registry 的 `latest` dist-tag 可能落后于 `next`：显式按版本号安装/排查时勿被 `latest` 误导。
+只支持 GitHub.com 与 GitHub Enterprise Cloud 的 `*.ghe.com` 域名。外部 ACP/Codex 会话、显式 API-key/认证覆盖和非原生端点不应被猜作某个 OAuth 账号。
+
+## 安装和更新
+
+这是待审阅的源码分支，不代表 npm 已发布新版本。用 DSH 插件管理器安装本地构建包或源码路径；安装、更新、移除后完整退出并重启 DSH。
+
+客户端语言注册随插件生命周期释放。若旧版本已经遗留同名 locale 导致入口消失，需重新加载整个页面或重启；新版本不会删除其他活跃实例的语言资源或吞掉冲突异常。
+
+原生组合已经提供 authorization 服务，不能重复挂载。受管理默认策略使用标准 composition 消费者隔离，不替换原始全局服务。若运行中修改或撤回该隔离出现 `COPILOT_RESTART_REQUIRED`，正常退出后重启，不能热回退为其他账号。
+
+出站代理和网络策略由 DSH 启动器负责；插件使用普通 `fetch`，不修改进程全局 fetch/dispatcher，也不记录代理 URL。
 
 ## 账号管理
 
-1. 打开设置，进入侧栏「**Copilot 账号**」（英文界面为 *Copilot Accounts*，位于 Models 之后）
-2. 点右上「**＋ 添加账号 ⌄**」，选择登录方式：
-   - **GitHub.com** — 个人与企业组织账号
-   - **GitHub Enterprise Cloud** — 贵公司 ghe.com 域名下的账号（填入 `company.ghe.com` 形式的域名后继续）
-3. 页面显示一串**代码**（user code，可一键复制）与验证链接（企业账号为 `https://<你的域名>/login/device`）
-4. 新标签打开链接，用对应账号输入代码；**SSO 用户必须对组织点 Authorize**（跳过则登录不生效）
-5. 成功后账号出现在列表中并带 **Default** 徽标（新登录账号自动成为默认）
+1. 设置侧栏打开「Copilot 账号」。
+2. 添加 GitHub.com 或 GitHub Enterprise Cloud 账号；企业域名应为 `company.ghe.com`。
+3. 使用页面给出的设备码和验证链接完成授权。
+4. 登录成功后新账号成为全局默认，旧槽位保留。
 
-> 设备码有时效（约 15 分钟），请拿到代码后尽快完成授权。若超时，页面会显示失败原因，重新添加即可。
+账号按归一化域名与用户名区分，id 由 Host 返回；客户端不拼接凭据 key。同域重新授权复用原槽位，跨域同名账号并存。恢复账号同样按 id 操作。已经因旧版本覆盖丢失的授权不能凭空恢复，需要重新登录。
 
-**多账号语义**（对齐 GitHub Copilot desktop）：
+上游设置页的「设为默认」仍是全局动作。新会话功能另外提供受保护的账号路由和 `copilotAccounts` Remote；使用专属路由的 Session 不会被全局默认变更改写。
 
-- 多个账号可同时保持登录，但**同时只有一个激活账号**（Default 徽标）服务于对话；添加并成功登录新账号后，新账号自动成为默认，原账号保留
-- 账号按归一化的**域名 + 用户名**区分：同一域名的不同用户、不同域名的同名用户均可独立切换/移除；同一域名与用户名重新授权会更新原账号而非新增一条
-- 卡片右上 **…** 菜单：**设为默认**（切换激活，即刻生效，无需重启）/ **移除账号**（仅清除所选账号凭据）/ **更新授权**（保留原槽位，重新进行同域名设备码登录）
-- 身份查询失败而暂时没有用户名的恢复账号也可独立切换/移除，不会因用户名缺失误操作其它账号
-- 每张卡片下方展示该账号的**套餐（Plan）**与 **AI credits** 进度条（按月重置）；用量拉取失败不影响登录与切换，仅显示不可用原因
-- 注销激活账号后路由回到未配置状态，激活其它账号即可恢复
+## Session 路由和 Remote
 
-## 使用
+- `copilot-default`：请求准备时捕获实际匹配到的默认 OAuth 账号。
+- `copilot-account-…`：固定账号的公开路由，id 为账号槽位的不可逆摘要。
+- `copilotAccounts`：所属 Host 的原生 Remote，包含目录查询、Session 绑定及受限账号操作；只允许 owner，并验证实际 Session 资源权限。
 
-- Models 页选择 `GitHub Copilot` 路由，模型目录已在首次登录时自动填充账号可用模型，无需手动「添加模型」；之后可自由增删精简，重启 / 重新登录都不会重置你的列表
-- **配额说明**：base 模型（GPT-4o/4.1 一类）不耗 premium requests；premium 模型（Claude、Gemini、o 系列等）每次调用消耗月度配额。日常建议 base 档，premium 模型按需手动选
+普通原生模型选择器可见受管理路由。Remote 绑定使用现有模型/推理档位，目标账号不支持时拒绝，不替换模型。会话忙碌或只读时不接受新绑定；已经准备的请求不被随后选择改写。
 
-## 注销与卸载
+原始 `github-copilot` replay、外来账号 replay 或无法证明 provenance 的状态按 provider-neutral 历史处理。有效同账号的必要推理签名不能因为临时网络错误而一概清除。身份校验包含实际 issuer 和长期授权的摘要，短期 access 更新不改变身份。
 
-- 移除单账号：账号卡 **…** 菜单 →「移除账号」
-- 卸载：`dsh plugin remove dsh-github-copilot-accounts` 后重启 DSH desktop（卸载不影响凭据库中已有记录，重装即恢复）
+长上下文自动压缩使用本步已捕获的账号，而不是上一条已记录请求的账号；用户显式指定的摘要 provider/model 仍优先。条件压缩角色只通过原生 BasicCompaction 的 `summarize` 扩展点调整摘要路由，保留原始配置条目和 Surface 事务。原生压缩被禁用时保持禁用；压缩角色不是账号 Remote 的启动依赖。启用状态下若保护未就绪，相关请求明确失败，不能悄悄用旧账号摘要。压缩控制变更或新增账号需要未展开的精确模型策略时，须完整重启。
 
-## 工作原理
+具体继承边界见 [Session 继承说明](docs/session-inheritance.md)。这些记录来自原生接口的离线合成测试，不代表真实账户端到端测试已完成。
+
+## 运行原理
 
 - 通过 `cordis.patch.yml` 生效：
   1. 注册本插件（host 侧提供 `/copilot-auth` 本地登录、账号、资料与用量接口，跨站 Origin 拒绝）
@@ -87,6 +93,10 @@ dsh plugin add /path/to/dsh-github-copilot-accounts
 - 套餐与用量取自 `copilot_internal/user`，直接使用长期 refresh token 认证，结果按 grant 绑定缓存 5 分钟；Copilot 短期 token 刷新独立进行
 - **模型目录兜底填充**：登录成功/切换账号时，取「凭据缓存的账号可用模型 ∩ pi-ai 内置目录」写入该路由的模型目录——仅当该路由尚未配置 `models` 且无 `modelOverrides` 时写入；目录已存在（含空列表）一律让路，插件启动/重启也绝不触碰用户 settings。同步失败经 `/copilot-auth/accounts` 的 `syncError` 字段暴露
 - **存储兼容**：已有 `copilot-auth/account-<login>` 与 `recovered-*` 槽位保留原 key，不要求迁移或重新登录；同一归一化域名与用户名重新授权会复用已有槽位及其 id。v0.1.0 单账号升级时，首次打开账号页或再次登录会将旧主凭据自动快照为槽位。旧版本已经因跨域同名覆盖而丢失的授权无法凭空恢复，需要重新添加该账号
+
+## 模型目录与用量
+
+每账号的实际模型列表取 **账号可用模型 id ∩ 原生描述目录 ∩ 用户配置**，可能彼此不同；同一模型 id 不意味着相同账号权限。
 
 ## 已知边界
 
@@ -103,12 +113,25 @@ dsh plugin add /path/to/dsh-github-copilot-accounts
 - 模型目录只在「尚不存在」时由登录成功兜底填充一次，填充后归用户所有：账号新增的模型不会自动出现——pi-ai 内置目录已描述的模型在 Models 页手动添加即可
 - 模型目录只写入 pi-ai 内置目录已描述的模型：目录快照外的新模型需随 DSH 升级获得
 
-## 开发
+登录/设默认时，仅当 `github-copilot` 未配置 `models` 且无 `modelOverrides` 时填充空目录。配置通过公开 Settings/ConfigEditor 读取；区分用户明确设置与原生默认值，并以版本校验阻止覆盖并发编辑。已有目录（包括空列表）归用户所有，不能覆盖；配置读取失败不能按空目录处理。无法确认整体动态表达式的配置来源时明确拒绝而不猜测。新模型的 wire 描述仍需随 DSH 内置目录获得；插件不改写安装包。
 
-```bash
-npm install
-npm test        # node:test：patch 结构 + host（多账号登录/隔离/激活/注销/用量/兜底填充）
-npm run build   # esbuild 打包 client 到 lib/client.js（__ModuleLoader__ 信封）
+全局短期 access 按原有建议间隔刷新；账号请求路径在未知、到期或建议刷新边界检查/更新授权与模型元数据。**这不是固定周期覆盖 Models 设置。** 显式手动模型刷新属于 #8 后续功能。
+
+当前套餐和用量来自 `copilot_internal/user` 的 `quota_snapshots.premium_interactions`；返回字段缺失时显示未知，不能当成 0。旧字段名不能证明它一定等同于网页新 AI-credit 计费报告。插件没有用量历史、趋势或月底预测。
+
+网页 `Usage billed to` 是付款主体选择。此 PR 不读取或修改它，不将组织 access 列表视作计费池，也不汇总未验证的付款方余额。
+
+## 卸载和回退
+
+卸载不删除 DSH 凭据记录或 Session 文件，但旧版本不认识新增的受管理/固定账号路由。这类会话回退后可能显示模型不可用；重新安装此功能恢复，或由用户显式选择旧版原生模型使用全局默认。插件不会后台把固定绑定转换成另一个账号。
+
+## 开发与验证
+
+使用环境已批准的 npm 源安装依赖，不在公开仓库记录本机私有源配置。
+
+```sh
+npm test
+npm run build
 npm pack --dry-run
 ```
 
@@ -121,30 +144,18 @@ npm pack --dry-run
 | `scripts/build-client.mjs` | client 打包（`__ModuleLoader__` CJS 工厂信封） |
 | `lib/client.js` | 构建产物（入库，使 git 安装免构建） |
 
+普通 Node 测试可直接运行。`*-native.test.mjs` 等原生集成测试需要测试代码指定的本地提取 DSH fixture；未提供时会跳过。它目前不是可随此仓库自动安装的 CI fixture，必须报告跳过数量，不能把本机通过结果当作维护者可直接复现的全部覆盖。
+
+测试使用合成 grant、Session、协议或 RPC，不读取用户 credentials 文件，不请求真实账号/模型。JSONL 覆盖 codec/backend read/restore，不证明 writer/fsync/Windows 锁或崩溃恢复。
+
+浏览器验证和新的会话 UI 留在 #7 后续 PR。这里没有 `test:ui` 命令。
+
+## 发布
+
+版本后缀标记 DSH 接口目标，不代表真实 GHE 验收或已发布 npm 版本。维护者确认后沿用原项目 GitHub Actions Trusted Publishing 流程；本分支不自动推送 release tag 或改变 registry dist-tag。
+
 ## 版本号规则
 
-版本号采用 semver 预发布格式：`<插件核心版本>-dsh-<最近一次验证所基于的 DSH 版本>`。`-dsh-` 后的版本仅表示验证基准，不代表最低支持版本，也不代表插件只支持该版本。
-
-```
-<插件核心版本>-dsh-<实测适配的 DSH 版本>
-   0.1.3            0.2.2-rc.1
-```
-
-- 当前版本 `0.1.3-dsh-0.2.2-rc.1` 表示插件核心版本为 `0.1.3`，最近一次验证基于 DSH desktop `0.2.2-rc.1`；另有 `0.2.0-rc.1`、`0.1.7-rc.2` 兼容验证记录。该后缀不构成最低版本要求；
-- **插件功能发版**：bump 核心号（patch/minor），后缀保持当前适配的 DSH 版本；
-- **基于新的 DSH 版本重新验证**：bump 核心号并替换后缀为新的验证基准；
-- git tag 与之一致但带 `v` 前缀：`v0.1.3-dsh-0.2.2-rc.1`；
-- 后缀版本号仍是合法 semver 预发布标识（每段仅含字母数字与连字符）。注意 npm 对预发布版本**要求显式 `--tag`**（CI 的 release.yml 与手工发布均带 `--tag latest`），显式挂到 `latest` 后 `dsh plugin add dsh-github-copilot-accounts` 按 dist-tag 安装即可正常获取该版本；仅 `^x.y.z` 形式的版本范围不会匹配预发布号，这不影响插件安装方式。
-
-## 维护者发布
-
-本项目使用 npm **Trusted Publishing（GitHub Actions OIDC）** 发布，不在仓库或 GitHub Secrets 中保存 `NPM_TOKEN`。
-
-- 发布 workflow：`.github/workflows/release.yml`，推送 `v*` tag 或手动触发
-- npm Trusted Publisher 配置：GitHub Actions；owner = `JacobCodeShow`，repository = `dsh-github-copilot-accounts`，workflow = `release.yml`，无 environment（见 `release.yml` 尾注）
-- **首次发布前**：包尚不存在时 npm 要求先完成一次性 bootstrap（不能用长期 secret），再在 package settings 中配置 Trusted Publisher。详见 [npm Trusted Publishing 文档](https://docs.npmjs.com/trusted-publishers)
-- 包名无 scope（`dsh-github-copilot-accounts`），首次发布前在 npm 确认该名称未被占用；fork 者如改名需同步 `package.json` / `cordis.patch.yml` / `scripts/build-client.mjs` 三处
-
-## License
+版本采用 `<插件核心版本>-dsh-<最近一次验证所基于的 DSH 版本>`，例如 `0.3.5-dsh-0.2.2-rc.1`。`-dsh-` 后缀只表示验证基准，不代表最低支持版本；实际安装兼容范围由 `package.json` 的 `engines.dsh` 声明。该版本尚未发布 npm；发版 tag 应使用 `v0.3.5-dsh-0.2.2-rc.1`。
 
 MIT

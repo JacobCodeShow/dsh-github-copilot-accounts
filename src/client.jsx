@@ -4,12 +4,11 @@
 // … 菜单 / Plan + AI credits 进度条）+「Add account」下拉两种登录入口
 // （GitHub.com / GitHub Enterprise Cloud）。
 // 文案走 locale 服务（en/zh 词典，随系统语言切换）；
-// 侧栏图标：壳的 navIcon(id) 对未知 id 回落齿轮且不开放注册，故用
-// MutationObserver 把本节导航行的齿轮替换为单色 Copilot 图标
-// （octicons copilot-16，fill=currentColor，浅/深主题自动一致）。
+// 设置侧栏图标通过公开 settings.section.icon 槽位注册，不修改宿主 DOM。
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createAvatarRecovery } from "./avatar-recovery.mjs";
+import { utcMonthProgress, combinedAccountUsage, validUsedPercent } from "./usage-summary.mjs";
 
 export const name = "copilot-auth-ui";
 export const inject = ["slots", "locale"];
@@ -35,6 +34,15 @@ const DICTS = {
     managePlan: "Manage plan",
     plan: "Plan",
     credits: "AI credits (resets monthly)",
+    settingsCreditsReset: "AI credits (resets monthly, next reset {date})",
+    settingsUsed: "{percent}% used",
+    settingsUsedLegend: "Used quota",
+    settingsMonthLegend: "UTC month elapsed {percent}%",
+    settingsMonth: "{month} UTC · {elapsed} days elapsed · {remaining} days left",
+    settingsMonthHint: "UTC calendar reference only; not a billing-cycle or month-end forecast.",
+    settingsCompare: "Used {used}% · UTC month elapsed {time}%",
+    settingsCombined: "Combined used {used} / {capacity}",
+    settingsCombinedHint: "Sum of account percentages (100% per account), not weighted credits or a shared billing-pool balance.",
     creditsNote: "AI credits are consumed based on model and token usage.",
     resetsOn: "Resets on",
     unlimited: "Unlimited quota",
@@ -74,7 +82,10 @@ const DICTS = {
     badgeUsage: "Usage",
     badgeUsed: "used",
     badgeResets: "resets",
-    badgeQuotaRemaining: "Quota left",
+    badgeGlobalDefault: "Global default",
+    badgeGlobalHint: "Global account only; this is not the account bound to this Session.",
+    quotaUsed: "{percent}% used",
+    quotaUnknown: "Usage unavailable",
   },
   zh: {
     nav: "Copilot 账号",
@@ -96,6 +107,15 @@ const DICTS = {
     managePlan: "管理套餐",
     plan: "套餐",
     credits: "AI 额度（按月重置）",
+    settingsCreditsReset: "AI 额度（按月重置，下次重置日期 {date}）",
+    settingsUsed: "已用 {percent}%",
+    settingsUsedLegend: "额度已用",
+    settingsMonthLegend: "UTC 本月已过 {percent}%",
+    settingsMonth: "UTC {month} · 已过 {elapsed} 天 · 还剩 {remaining} 天",
+    settingsMonthHint: "仅作 UTC 自然月参考，不代表计费周期或月底预测。",
+    settingsCompare: "额度已用 {used}% · UTC 本月已过 {time}%",
+    settingsCombined: "合计已用 {used} / {capacity}",
+    settingsCombinedHint: "每个账号按 100% 归一化后相加，不代表加权额度或共享计费池余额。",
     creditsNote: "AI 额度消耗取决于模型与 token 用量。",
     resetsOn: "重置日期",
     unlimited: "不限量",
@@ -135,11 +155,12 @@ const DICTS = {
     badgeUsage: "额度",
     badgeUsed: "已使用",
     badgeResets: "重置",
-    badgeQuotaRemaining: "剩余额度",
+    badgeGlobalDefault: "全局默认",
+    badgeGlobalHint: "仅显示和切换全局账号，不代表当前会话绑定账号。",
+    quotaUsed: "已用 {percent}%",
+    quotaUnknown: "用量不可用",
   },
 };
-
-const NAV_TEXTS = Object.keys(DICTS).map((locale) => DICTS[locale].nav);
 
 // 原始错误 → 用户友好文案。技术细节（fetch failed/timeout/abort）翻译成
 // 可理解的网络/超时/取消语义；含中文的 host mismatch 错误用专门文案。
@@ -198,45 +219,10 @@ const CHEVRON_DOWN_SVG =
   '<svg aria-hidden="true" width="12" height="12" viewBox="0 0 16 16" fill="currentColor" style="flex:none;margin-left:4px;vertical-align:middle">' +
   '<path d="M12.78 5.22a.749.749 0 0 1 0 1.06l-4.25 4.25a.749.749 0 0 1-1.06 0L3.22 6.28a.749.749 0 1 1 1.06-1.06L8 8.939l3.72-3.719a.749.749 0 0 1 1.06 0Z"/></svg>';
 
-// 壳的导航行 button 结构固定为 [<svg class=navIcon*>, <span class=navLabel*>]，
-// 按 label 文本找到本节那一行：隐藏齿轮 svg、紧随其后插入 Copilot svg
-//（继承原 svg 的 class 以复用尺寸/主题样式；不删除 React 管理的节点）。
-function enforceNavIcon(labelText) {
-  if (!labelText) return;
-  for (const cell of document.querySelectorAll("button")) {
-    const spans = cell.querySelectorAll("span");
-    const labelSpan = spans[spans.length - 1];
-    if (!labelSpan || labelSpan.textContent !== labelText) continue;
-    if (cell.dataset.copilotIcon === "1") continue;
-    const gear = cell.querySelector("svg");
-    if (!gear) continue;
-    gear.style.display = "none";
-    const holder = document.createElement("span");
-    holder.innerHTML = COPILOT_ICON_SVG;
-    const svg = holder.firstElementChild;
-    const cls = gear.className && typeof gear.className === "object" ? gear.className.baseVal : gear.className;
-    if (cls) svg.setAttribute("class", cls);
-    cell.dataset.copilotIcon = "1";
-    gear.after(svg);
-  }
-}
-
-function startNavIconEnforcer(getLabelText) {
-  if (typeof document === "undefined" || typeof MutationObserver === "undefined") return;
-  let queued = false;
-  const run = () => {
-    queued = false;
-    try {
-      enforceNavIcon(getLabelText());
-    } catch { /* DOM 未就绪时等下一次 mutation 再试 */ }
-  };
-  const schedule = () => {
-    if (queued) return;
-    queued = true;
-    queueMicrotask(run);
-  };
-  new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true });
-  schedule();
+function SettingsCopilotIcon({ size = 20 }) {
+  // Reuse only the trusted static octicon paths; no user content enters this SVG.
+  return <svg aria-hidden="true" width={size} height={size} viewBox="0 0 16 16" fill="currentColor"
+    style={{ display: "block", flex: "none" }} dangerouslySetInnerHTML={{ __html: COPILOT_ICON_SVG.replace(/^<svg[^>]*>|<\/svg>$/g, "") }} />;
 }
 
 const styles = {
@@ -345,42 +331,61 @@ function Avatar({ id, src, name, size = 36, onRecovered }) {
   );
 }
 
-// Plan + AI credits 块：plan / 进度条 / 重置日期全部缺字段即隐藏对应元素。
-function UsageBlock({ t, plan, usage, usageError }) {
-  if (usageError) {
-    return <p style={styles.muted}>{t("usageFailed")}：{usageError}</p>;
-  }
-  if (!plan && !usage) return null;
-  const percent = usage?.unlimited ? undefined : usage?.percentUsed;
-  return (
-    <div style={styles.planBlock}>
-      {plan !== undefined && (
-        <>
-          <div style={styles.planTitle}>{t("plan")}</div>
-          <div style={styles.planValue}>{plan}</div>
-        </>
-      )}
-      {usage?.unlimited === true && <div style={styles.muted}>{t("unlimited")}</div>}
-      {typeof percent === "number" && (
-        <>
-          <div style={styles.creditsRow}>
-            <span>{t("credits")}</span>
-            <span>{Math.round(percent)}%</span>
-          </div>
-          <div style={styles.barTrack}>
-            <div style={{ ...styles.barFill, width: `${Math.min(100, Math.max(0, percent))}%` }} />
-          </div>
-        </>
-      )}
-      {usage?.resets !== undefined && (
-        <div style={styles.muted}>{t("resetsOn")} {usage.resets}</div>
-      )}
-      <div style={styles.muted}>{t("creditsNote")}</div>
-    </div>
-  );
+// One display convention for settings, collapsed badge and expanded panel.
+// Unlimited is not 0% used; only drawing is clamped for over-quota readings.
+function usedQuota(usage) {
+  if (usage?.unlimited === true) return { kind: "unlimited", percent: null, high: false };
+  const percent = usage?.percentUsed;
+  if (!Number.isFinite(percent) || percent < 0) return { kind: "unknown", percent: null, high: false };
+  const rounded = Math.round(percent);
+  return { kind: "percent", percent, rounded, high: rounded > 80, fill: Math.min(100, percent) };
+}
+function quotaText(quota, t) {
+  return quota.kind === "percent" ? t("quotaUsed").replace("{percent}", String(quota.rounded))
+    : quota.kind === "unlimited" ? t("unlimited") : t("quotaUnknown");
 }
 
-function AccountCard({ t, account, busy, menuOpen, onToggleMenu, onActivate, onLogout, onUpdateAuth, onManagePlan, onAvatarRecovered }) {
+function SettingsUsageSummary({ accounts, month, t }) {
+  const combined = combinedAccountUsage(accounts);
+  const label = t("settingsMonth").replace("{month}", month.key).replace("{elapsed}", month.elapsedDays.toFixed(1)).replace("{remaining}", month.remainingDays.toFixed(1));
+  return <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+    {combined.visible && <div data-combined-usage title={t("settingsCombinedHint")} style={{ fontSize: 13, fontWeight: 500, fontVariantNumeric: "tabular-nums" }}>
+      {t("settingsCombined").replace("{used}", combined.used === null ? "—" : `${combined.used}%`).replace("{capacity}", combined.capacity === null ? "∞" : `${combined.capacity}%`)}
+    </div>}
+    <div data-usage-month title={t("settingsMonthHint")} style={styles.muted}>{label}</div>
+    <div data-usage-legend style={{ ...styles.muted, display: "flex", flexWrap: "wrap", gap: 12 }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><i aria-hidden="true" style={{ width: 7, height: 7, borderRadius: "50%", background: "#4c6ef5" }} />{t("settingsUsedLegend")}</span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><i aria-hidden="true" style={{ width: 7, height: 7, background: "#d9a441", transform: "rotate(45deg)" }} />{t("settingsMonthLegend").replace("{percent}", month.elapsedPercent.toFixed(1))}</span>
+    </div>
+  </div>;
+}
+
+// Settings-only compact presentation; the existing global dock remains unchanged.
+function UsageBlock({ t, plan, usage, usageError, month = utcMonthProgress() }) {
+  if (usageError) return <p style={styles.muted}>{t("usageFailed")}：{usageError}</p>;
+  if (!plan && !usage) return null;
+  const percent = validUsedPercent(usage);
+  const resets = typeof usage?.resets === "string" && usage.resets !== "";
+  const title = resets ? t("settingsCreditsReset").replace("{date}", usage.resets) : t("credits");
+  const comparison = t("settingsCompare").replace("{used}", percent === null ? "—" : percent.toFixed(1)).replace("{time}", month.elapsedPercent.toFixed(1));
+  const marker = { position: "absolute", top: "50%", transform: "translate(-50%, -50%)", border: "1px solid var(--dsh-bg, #fff)" };
+  return <div style={styles.planBlock}>
+    {plan !== undefined && <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+      <span style={styles.planTitle}>{t("plan")}</span><span style={styles.planValue}>{plan}</span>
+    </div>}
+    {(usage || resets) && <div style={{ ...styles.creditsRow, gap: 12 }}>
+      <span>{title}</span>
+      <span style={{ flex: "none", fontVariantNumeric: "tabular-nums" }}>{usage?.unlimited === true ? t("unlimited") : percent === null ? "—" : t("settingsUsed").replace("{percent}", String(Math.round(percent)))}</span>
+    </div>}
+    {percent !== null && <div data-usage-track role="img" aria-label={comparison} title={comparison} style={{ ...styles.barTrack, position: "relative", overflow: "visible", margin: "5px 0" }}>
+      <div style={{ ...styles.barFill, borderRadius: "inherit", width: `${Math.min(100, percent)}%`, opacity: 0.55 }} />
+      <span data-usage-marker style={{ ...marker, left: `${Math.min(100, percent)}%`, width: 9, height: 9, borderRadius: "50%", background: "#4c6ef5", zIndex: 2 }} />
+      <span data-month-marker style={{ ...marker, left: `${month.elapsedPercent}%`, width: 8, height: 8, background: "#d9a441", transform: "translate(-50%, -50%) rotate(45deg)" }} />
+    </div>}
+  </div>;
+}
+
+function AccountCard({ t, account, month, busy, menuOpen, onToggleMenu, onActivate, onLogout, onUpdateAuth, onManagePlan, onAvatarRecovered }) {
   const title = account.name ?? account.login ?? t("legacyAccount");
   return (
     <div style={styles.card}>
@@ -435,12 +440,15 @@ function AccountCard({ t, account, busy, menuOpen, onToggleMenu, onActivate, onL
           )}
         </div>
       </div>
-      <UsageBlock t={t} plan={account.plan} usage={account.usage} usageError={account.usageError} />
+      <UsageBlock t={t} month={month} plan={account.plan} usage={account.usage} usageError={account.usageError} />
     </div>
   );
 }
 
 function CopilotSection({ t = (key) => DICTS.en[key] ?? key }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => { const clock = setInterval(() => setNow(Date.now()), 60_000); return () => clearInterval(clock); }, []);
+  const month = utcMonthProgress(now);
   const [accounts, setAccounts] = useState(null); // null = 加载中
   const [signing, setSigning] = useState(null); // 进行中的 attempt（/state 快照）
   const [error, setError] = useState(undefined);
@@ -849,6 +857,7 @@ function CopilotSection({ t = (key) => DICTS.en[key] ?? key }) {
         <p style={styles.error}>{error}</p>
       )}
 
+      {accounts?.length > 0 && <SettingsUsageSummary accounts={accounts} month={month} t={t} />}
       {accounts === null ? (
         <p style={styles.sub}>{t("loading")}</p>
       ) : accounts.length === 0 && signing === null ? (
@@ -859,6 +868,7 @@ function CopilotSection({ t = (key) => DICTS.en[key] ?? key }) {
             key={account.id}
             t={t}
             account={account}
+            month={month}
             busy={busy}
             menuOpen={menuFor !== null && menuFor === account.id}
             onToggleMenu={() => setMenuFor((v) => (v === account.id ? null : account.id))}
@@ -871,6 +881,7 @@ function CopilotSection({ t = (key) => DICTS.en[key] ?? key }) {
         ))
       )}
 
+      {accounts?.length > 0 && <p style={styles.muted}>{t("creditsNote")}</p>}
       {syncError && <p style={styles.muted}>sync: {syncError}</p>}
     </div>
   );
@@ -1055,12 +1066,8 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
   };
 
   const badgeOpacity = whoami?.configured ? 1 : 0.5;
-  // 剩余额度 = 100 - 已用百分比（进度条 >80% 变红，对应剩余 <20%）。
-  // Math.round 消除浮点误差（100 - 69.2 = 30.799999...）。
-  const used = whoami?.usagePercent;
-  const quotaRemaining = typeof used === "number"
-    ? Math.round(Math.max(0, Math.min(100, 100 - used))) : null;
-  const lowQuota = quotaRemaining !== null && quotaRemaining < 20;
+  const quota = usedQuota({ percentUsed: whoami?.usagePercent, unlimited: whoami?.usageUnlimited });
+  const usageLabel = quotaText(quota, t);
 
   if (!whoami) {
     return (
@@ -1082,8 +1089,9 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
   }
 
   const badgeTitle = [
+    t("badgeGlobalHint"),
     whoami.login,
-    quotaRemaining !== null && `${t("badgeQuotaRemaining")} ${quotaRemaining}%`,
+    usageLabel,
   ].filter(Boolean).join(" · ") || undefined;
 
   // 弹窗用 position: fixed 渲染到根堆叠上下文，避免被侧边栏（Files 面板）
@@ -1103,12 +1111,10 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
     <div style={{ position: "relative", flex: "none" }} ref={badgeRef}>
       <span className="copilot-badge" title={badgeTitle} onClick={() => setOpen((v) => !v)}>
         <span dangerouslySetInnerHTML={{ __html: BADGE_COPILOT_SVG }} />
-        {/* logo 后只显示剩余额度百分比 */}
-        {quotaRemaining !== null && (
-          <span className="copilot-badge-label" style={lowQuota ? { color: "#e03131" } : undefined}>
-            {quotaRemaining}%
-          </span>
-        )}
+        <span>{t("badgeGlobalDefault")}</span>
+        <span className="copilot-badge-label" style={quota.high ? { color: "#e03131" } : undefined}>
+          {usageLabel}
+        </span>
       </span>
       {open && createPortal(
         <>
@@ -1142,25 +1148,22 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
               </button>
             </div>
             {/* 用量区 */}
-            {whoami.usagePercent !== null && whoami.usagePercent !== undefined && (
-              <div style={{ padding: "10px 12px" }}>
+            <div style={{ padding: "10px 12px" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6, opacity: 0.7 }}>
                   <span>{t("badgeUsage")}</span>
                   {whoami.usageResetDate && <span>{t("badgeResets")} {whoami.usageResetDate}</span>}
                 </div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 6 }}>
-                  <span style={{ fontSize: 20, fontWeight: 700 }}>{whoami.usagePercent}%</span>
-                  <span style={{ fontSize: 12, opacity: 0.6 }}>{t("badgeUsed")}</span>
+                  <span style={{ fontSize: 20, fontWeight: 700 }}>{usageLabel}</span>
                 </div>
-                <div style={{ height: 4, background: "rgba(128,128,128,0.2)", borderRadius: 2, overflow: "hidden" }}>
+                {quota.kind === "percent" && <div role="img" aria-label={usageLabel} style={{ height: 4, background: "rgba(128,128,128,0.2)", borderRadius: 2, overflow: "hidden" }}>
                   <div style={{
-                    height: "100%", width: `${whoami.usagePercent}%`,
-                    background: whoami.usagePercent > 80 ? "#e03131" : "#4c6ef5",
+                    height: "100%", width: `${quota.fill}%`,
+                    background: quota.high ? "#e03131" : "#4c6ef5",
                     borderRadius: 2,
                   }} />
-                </div>
-              </div>
-            )}
+                </div>}
+            </div>
             {/* 身份行：当前账号头像 + 用户名。
                 排版与下方账号切换列表行一致（18px 圆头像、13px 文字、gap 8）。 */}
             <div style={{
@@ -1267,5 +1270,8 @@ export function apply(ctx) {
     { name: "conversation.composer.dock", id: "copilot-badge", order: 50, inject: () => ({ t }) },
     CopilotBadge,
   ));
-  startNavIconEnforcer(() => t("nav"));
+  ctx.slots.inject("settings.section.icon", () => ctx.slots.register(
+    { name: "settings.section.icon", id: "copilot", order: 11 },
+    SettingsCopilotIcon,
+  ));
 }

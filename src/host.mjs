@@ -7,16 +7,16 @@
 //     key；pi-ai 请求路径只读主 key）；
 //   - 用量展示（copilot_internal/user，access 过期/401 先刷新一次）。
 // 登录成功/激活后把账号可用模型兜底填充为该路由的模型目录（目录保护不变）。
-// 不提供模型目录手动刷新：桌面版（0.2.2-rc.1）pi-ai 目录位于只读 app.asar 内，
+// 不提供模型目录手动刷新：桌面版（0.2.0-rc.1）pi-ai 目录位于只读 app.asar 内，
 // 数据级目录补丁无法写入；上游新模型随 DSH 升级获得。
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
-import childProcess from "node:child_process";
-import { pathToFileURL } from "node:url";
+import { openVerificationLink, verificationLink } from "./external-link.mjs";
+import { randomUUID } from "node:crypto";
 import {
-  ACCOUNT_SCOPE, CREDENTIAL_KEY, ROUTE_PREFIX, accountKey, apiBase, emptyState, isGitHubDomain, normalizeDomain, routes,
+  ACCOUNT_SCOPE, CREDENTIAL_KEY, ROUTE_PREFIX, accountKey, apiBase, emptyState, normalizeDomain, routes,
 } from "./shared.mjs";
-
+import { isUsableAccountRecord } from "./account-adapter.mjs";
 import { readAccountConfig, fillMissingAccountModels } from "./account-config.mjs";
 
 export const name = "copilot-auth";
@@ -54,8 +54,10 @@ function readCatalogModelIds() {
   return null;
 }
 
-// Unknown configuration is not an empty directory and must never permit a write.
+// Read the effective providers form through the released Settings API. Unknown
+// config must block initialization/writes, never silently become an empty route.
 function readConfiguredRoute(ctx) {
+  if (!ctx.llm) throw new Error("Copilot model configuration is unavailable");
   return readAccountConfig(ctx.settings, ctx.configEditor, ctx.llm).profile;
 }
 
@@ -70,7 +72,7 @@ async function syncAvailableModels(ctx) {
   const record = await ctx.credentials.readRecord(CREDENTIAL_KEY);
   const available = record?.payload?.availableModelIds;
   if (!Array.isArray(available) || available.length === 0) return;
-  readConfiguredRoute(ctx); // Validate actual scope/provenance before lookup.
+  readConfiguredRoute(ctx); // Invalid/unavailable effective config never permits a write.
   const catalog = readCatalogModelIds();
   let ids;
   if (catalog) {
@@ -82,6 +84,8 @@ async function syncAvailableModels(ctx) {
     ids = available.filter((id) => served.has(id));
   }
   if (ids.length === 0) return;
+  // Catalogue lookup may await: re-read the current effective form, re-check
+  // user ownership, and use its revision for native compare-and-set admission.
   await fillMissingAccountModels(ctx.settings, ids, ctx.configEditor, ctx.llm);
 }
 
@@ -378,89 +382,37 @@ async function loadUsage(ctx, slot, domain) {
     if (!res.ok) throw new Error(`usage ${res.status} ${res.statusText}`);
     return summarizeUsage(await res.json());
   } catch (err) {
-    return { error: String(err?.message ?? err) };
+    return { error: "usage is unavailable" };
   }
 }
 
 // ---------- 插件主体 ----------
 
-// 代理环境兼容：Node.js 内置 fetch（undici）不认 HTTP_PROXY/HTTPS_PROXY
-// 环境变量，也不读系统 PAC 文件。公司网络下 pi-ai 的 fetch 直连 GitHub
-// 必失败（"fetch failed"）。此函数从 DSH 的 pnpm store 动态加载 undici，
-// 用 ProxyAgent 配置全局 dispatcher，使所有 fetch 走指定代理。
-// 同时追加 Accept-Encoding: identity 防止代理 gzip 压缩后不回传
-// Content-Encoding 头导致 JSON 解析报 "Unexpected token"。
-async function setupProxy(ctx) {
-  if (globalThis.__copilotAuthProxySetup) return;
-  globalThis.__copilotAuthProxySetup = true;
-
-  const proxy = process.env.HTTPS_PROXY || process.env.https_proxy
-    || process.env.HTTP_PROXY || process.env.http_proxy;
-  if (!proxy) {
-    ctx.logger?.warn?.("copilot-auth: no proxy env var set; direct connection may fail in corporate networks");
-    return;
-  }
-
-  // 动态加载 undici（从 DSH 的 pnpm store 中查找）
-  let undici = null;
-  try {
-    undici = await import("undici");
-  } catch {
-    // 回退：从 pi-ai 数据文件路径推断 pnpm store 位置
-    try {
-      const { readdirSync } = await import("node:fs");
-      const dataFile = findCatalogFile();
-      if (dataFile) {
-        const base = dataFile.split("node_modules")[0];
-        const pnpmDir = join(base, "node_modules", ".pnpm");
-        for (const entry of readdirSync(pnpmDir)) {
-          if (entry.startsWith("undici@") && !entry.includes("undici-types")) {
-            const candidate = join(pnpmDir, entry, "node_modules", "undici");
-            if (existsSync(join(candidate, "package.json"))) {
-              undici = await import(pathToFileURL(candidate).href);
-              break;
-            }
-          }
-        }
-      }
-    } catch { /* undici 不可用 */ }
-  }
-
-  if (undici?.setGlobalDispatcher && undici?.ProxyAgent) {
-    undici.setGlobalDispatcher(new undici.ProxyAgent(proxy));
-    ctx.logger?.info?.("copilot-auth: proxy configured via undici ProxyAgent: %s", proxy);
-
-    // 追加 Accept-Encoding: identity 防止代理 gzip 压缩
-    const _fetch = globalThis.fetch;
-    globalThis.fetch = (input, init) => {
-      try {
-        const url = typeof input === "string" ? input : input?.url ?? "";
-        if (url.includes("github.com") || url.includes("ghe.com")) {
-          init = init ?? {};
-          const headers = new Headers(init.headers ?? {});
-          if (!headers.has("Accept-Encoding")) {
-            headers.set("Accept-Encoding", "identity");
-          }
-          init.headers = headers;
-        }
-      } catch { /* 回退到原始 fetch */ }
-      return _fetch(input, init);
-    };
-  } else {
-    ctx.logger?.warn?.("copilot-auth: undici not available, cannot set up proxy");
-  }
-}
-
+// DSH 0.2.2's launcher owns outbound HTTP/proxy policy before plugins load.
+// Ordinary fetch (including native pi-ai SDK calls) uses that policy. Never
+// replace global fetch/dispatcher or print proxy URL values from this plugin.
 export function apply(ctx) {
-  // 代理配置异步执行，不阻塞路由注册——import undici + setGlobalDispatcher
-  // 通常 <100ms，用户点击添加账号前就已完成。
-  setupProxy(ctx).catch((err) => {
-    ctx.logger?.warn?.("copilot-auth: proxy setup failed: %s", String(err?.message ?? err));
-  });
   const r = routes();
-  const register = (route) => ctx.effect(() => ctx.webServer.register(route));
+  // Route registration is owned by this plugin lifecycle, so HMR/reinstall
+  // never leaves duplicate exact routes in a running Host.
+  const register = (route) => ctx.effect(() => ctx.webServer.register(route), "copilot-auth route");
   let attempt = emptyState();
   let lastSyncError;
+  let sessionFeature, hostDisposed = false, signInPending = false;
+  let globalAccountMutations = Promise.resolve();
+  const serializeGlobalAccountMutation = (operation) => {
+    const result = globalAccountMutations.then(operation);
+    globalAccountMutations = result.catch(() => {});
+    return result;
+  };
+  const removedSessionAccounts = new Set(), reactivatedSessionAccounts = new Set();
+  const notifySessionFeature = (operation, id) => {
+    if (operation === "remove") { removedSessionAccounts.add(id); reactivatedSessionAccounts.delete(id); }
+    if (operation === "reactivate") { removedSessionAccounts.delete(id); reactivatedSessionAccounts.add(id); }
+    if (hostDisposed || !sessionFeature) return;
+    try { return Promise.resolve(sessionFeature[operation]?.(id)).catch(() => ctx.logger?.warn?.("copilot-auth: Session account routes need reconciliation")); }
+    catch { ctx.logger?.warn?.("copilot-auth: Session account routes need reconciliation"); }
+  };
   // 资料缓存时间是刷新策略，不是对 GHE 头像 URL 签名有效期的假设。
   const PROFILE_TTL_MS = 5 * 60 * 1000;
   const PROFILE_FAILURE_TTL_MS = 60 * 1000;
@@ -526,7 +478,7 @@ export function apply(ctx) {
   // 模型目录同步只在登录成功/激活后执行（对齐 2026-09-05 结论：挂载不同步）。
   // 失败不静默：错误经 /accounts 的 syncError 字段暴露，便于诊断。
   const sync = () => syncAvailableModels(ctx).then(() => { lastSyncError = undefined; }).catch((err) => {
-    lastSyncError = String(err?.message ?? err);
+    lastSyncError = "model catalog sync failed";
     ctx.logger?.warn?.("copilot-auth: model sync failed: %s", lastSyncError);
   });
 
@@ -539,9 +491,13 @@ export function apply(ctx) {
         const key = await ensureSlot(ctx, record.payload);
         usageCache.delete(key); // 重新授权后不沿用旧 grant 的套餐/用量缓存。
         profileCache.delete(key); // 同 grant 重新登录也应重新获取资料/头像 URL。
+        await ctx.credentials.modifyRecord(CREDENTIAL_KEY, (current) =>
+          isGrant(current) && sameGrant(current.payload, record.payload)
+            ? { kind: "grant", payload: { ...current.payload, copilotDefaultEpoch: randomUUID() } } : undefined);
+        await notifySessionFeature("reactivate", key);
       }
     } catch (err) {
-      ctx.logger?.warn?.("copilot-auth: account slot persist failed: %s", String(err?.message ?? err));
+      ctx.logger?.warn?.("copilot-auth: account slot persist failed");
     }
     void sync();
     // 新登录拿到 fresh token，重置刷新计时器。
@@ -552,15 +508,21 @@ export function apply(ctx) {
   // pi-ai 仅在 expires 到期时刷新，但 GitHub 的 expires_at 偏长、access 实际早失效。
   // 这里按 refresh_in（默认 25min）周期刷新，保证 pi-ai 读到的 access 始终有效。
   let refreshTimer = null;
-  let disposed = false;
+  // Own cleanup BEFORE creating a timer or the first route. A later route
+  // collision/initialization error must not leave a refresh task alive.
   ctx.effect(() => () => {
-    disposed = true;
+    hostDisposed = true;
     if (refreshTimer) clearTimeout(refreshTimer);
-  });
+    profileCache.clear(); usageCache.clear();
+    let cleanup;
+    try { cleanup = sessionFeature?.dispose?.(); } catch { /* scoped feature revokes first */ }
+    if (signInPending) { try { ctx.authorization?.cancel?.(CREDENTIAL_KEY); } catch { /* native cleanup owns commit */ } }
+    return Promise.resolve(cleanup).catch(() => {});
+  }, "copilot-auth lifecycle");
   // 统一排下一次刷新。unref() 让定时器不保活事件循环——node --test / CLI
   // 场景进程跑完即退；DSH 宿主常驻且有其他句柄，定时器照常触发。
   const scheduleRefresh = (delayMs) => {
-    if (disposed) return;
+    if (hostDisposed) return;
     if (refreshTimer) clearTimeout(refreshTimer);
     refreshTimer = setTimeout(refreshActive, delayMs);
     refreshTimer.unref?.();
@@ -576,7 +538,7 @@ export function apply(ctx) {
       ctx.logger?.info?.("copilot-auth: access token refreshed, next in %ds", Math.round(nextMs / 1000));
       scheduleRefresh(nextMs);
     } catch (err) {
-      ctx.logger?.warn?.("copilot-auth: token refresh failed, retry in 5min: %s", String(err?.message ?? err));
+      ctx.logger?.warn?.("copilot-auth: token refresh failed, retry in 5min");
       scheduleRefresh(5 * 60 * 1000);
     }
   };
@@ -588,7 +550,7 @@ export function apply(ctx) {
     path: r.start,
     handler: async (req, res) => {
       if (!guard(req, res, "POST")) return;
-      if (attempt.status === "running") {
+      if (attempt.status === "running" || signInPending) {
         json(res, 409, { ok: false, error: "already running" });
         return;
       }
@@ -596,7 +558,7 @@ export function apply(ctx) {
       try {
         body = await readJsonBody(req);
       } catch (err) {
-        json(res, 400, { ok: false, error: err?.message ?? "invalid body" });
+        json(res, 400, { ok: false, error: "invalid body" });
         return;
       }
       const kind = body?.kind;
@@ -607,7 +569,7 @@ export function apply(ctx) {
       let domain;
       if (kind === "ghe.com") {
         domain = normalizeDomain(body.domain);
-        if (domain === "github.com" || !isGitHubDomain(domain)) {
+        if (domain === null || !domain.endsWith(".ghe.com") || !domain.split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(label))) {
           json(res, 400, { ok: false, error: 'ghe.com sign-in needs a domain like "company.ghe.com"' });
           return;
         }
@@ -619,12 +581,12 @@ export function apply(ctx) {
       // flow 写主 key 前先快照：既有凭据若无槽位（v0.1.0 升级场景）先落袋，
       // 否则新登录会把它覆盖丢失。identity:false——快照只保 payload 不做网络。
       try {
-        const main = await ctx.credentials.readRecord(CREDENTIAL_KEY);
-        if (isGrant(main) && typeof main.payload.refresh === "string") {
-          await ensureSlot(ctx, main.payload, { identity: false });
-        }
-      } catch (err) {
-        ctx.logger?.warn?.("copilot-auth: pre-login snapshot failed: %s", String(err?.message ?? err));
+        await serializeGlobalAccountMutation(async () => {
+          const main = await ctx.credentials.readRecord(CREDENTIAL_KEY);
+          if (isGrant(main) && typeof main.payload.refresh === "string") await ensureSlot(ctx, main.payload, { identity: false });
+        });
+      } catch {
+        ctx.logger?.warn?.("copilot-auth: pre-login snapshot failed");
       }
       const myAttempt = attempt;
       const interaction = {
@@ -640,6 +602,7 @@ export function apply(ctx) {
               if (host !== myAttempt.domain) {
                 myAttempt.status = "failed";
                 myAttempt.error = `企业域名未生效：设备码链接指向 ${host}，请重新登录并检查域名`;
+                try { ctx.authorization?.cancel?.(CREDENTIAL_KEY); } catch { /* abort wrong-domain flow if supported */ }
               }
             } catch { /* 非法 URL 交由后续流程自证 */ }
           }
@@ -650,12 +613,13 @@ export function apply(ctx) {
           if (p && typeof p.message === "string" && p.message.includes("Enterprise")) {
             return Promise.resolve(myAttempt.kind === "ghe.com" ? myAttempt.domain : "");
           }
-          return Promise.reject(new Error("unexpected prompt: " + (p?.message ?? String(p))));
+          return Promise.reject(Object.assign(new Error("unexpected prompt"), { code: "COPILOT_UNEXPECTED_PROMPT" }));
         },
       };
       // 响应先行：begin 以后台任务执行，handler 返回路径不得 await begin。
-      void ctx.authorization
-        .begin({ key: CREDENTIAL_KEY, method: "oauth", interaction })
+      signInPending = true;
+      void Promise.resolve()
+        .then(() => ctx.authorization.begin({ key: CREDENTIAL_KEY, method: "oauth", interaction }))
         .then(async (outcome) => {
           if (myAttempt.status !== "running") return; // 防呆已置败
           // AuthorizationOutcome.status: 'authorized' | 'cancelled'（types.d.ts L68-71）
@@ -670,8 +634,9 @@ export function apply(ctx) {
         .catch((err) => {
           if (myAttempt.status !== "running") return;
           myAttempt.status = "failed";
-          myAttempt.error = String(err?.message ?? err);
-        });
+          myAttempt.error = err?.code === "COPILOT_UNEXPECTED_PROMPT" ? "unexpected prompt" : "登录失败，请重新授权";
+        })
+        .finally(() => { signInPending = false; });
       json(res, 202, { ok: true });
     },
   });
@@ -685,11 +650,7 @@ export function apply(ctx) {
     },
   });
 
-  register({
-    kind: "exact",
-    path: r.accounts,
-    handler: async (req, res) => {
-      if (!guard(req, res, "GET")) return;
+  const collectAccounts = async () => {
       // v0.1.0 升级遗留：主 key 有凭据但无槽位 → 先补建（含身份回填），
       // 让列表视图统一。写失败（只读库等）按空列表继续。
       try {
@@ -701,7 +662,7 @@ export function apply(ctx) {
           }
         }
       } catch (err) {
-        ctx.logger?.warn?.("copilot-auth: legacy slot migration failed: %s", String(err?.message ?? err));
+        ctx.logger?.warn?.("copilot-auth: legacy slot migration failed");
       }
       let slots = [];
       let mainPayload;
@@ -734,8 +695,49 @@ export function apply(ctx) {
       accounts.sort((a, b) =>
         Number(b.active) - Number(a.active) || String(a.login ?? "").localeCompare(String(b.login ?? ""))
         || a.domain.localeCompare(b.domain) || a.id.localeCompare(b.id));
-      json(res, 200, { accounts, signingIn: attempt.status === "running", syncError: lastSyncError });
+      return { accounts, signingIn: attempt.status === "running", syncError: lastSyncError };
+  };
+  register({
+    kind: "exact",
+    path: r.accounts,
+    handler: async (req, res) => {
+      if (!guard(req, res, "GET")) return;
+      json(res, 200, await collectAccounts());
+      notifySessionFeature("reconcile");
     },
+  });
+
+  const accountActionError = (message, code, status) => Object.assign(new Error(message), { code, status });
+  const refreshProfileById = async (id) => {
+    const { slot } = selectSlot(await listAccountSlots(ctx), { id });
+    if (!slot) throw accountActionError("no such account", "ACCOUNT_UNAVAILABLE", 404);
+    const result = await slotProfile(slot, { force: true });
+    if (result.error !== undefined) throw accountActionError(result.error, "ACCOUNT_PROFILE_FAILED", result.code);
+    const avatarUrl = result.slot.payload.account?.avatarUrl;
+    return { ok: true, ...(typeof avatarUrl === "string" ? { avatarUrl } : {}) };
+  };
+  const setDefaultAccountById = (id) => serializeGlobalAccountMutation(async () => {
+    if (attempt.status === "running" || signInPending) throw accountActionError("finish or cancel sign-in first", "SIGN_IN_PROGRESS", 409);
+    const { slot } = selectSlot(await listAccountSlots(ctx), { id });
+    if (!slot || !isUsableAccountRecord({ kind: "grant", payload: slot.payload })) throw accountActionError("no such account", "ACCOUNT_UNAVAILABLE", 404);
+    if (removedSessionAccounts.has(id)) throw accountActionError("account was removed", "ACCOUNT_UNAVAILABLE", 404);
+    try {
+      await ctx.credentials.modifyRecord(CREDENTIAL_KEY, async () => {
+        // Recheck under the credential writer lock. A stale selection must not
+        // resurrect a removed/reauthorized account as the shared default.
+        const live = await ctx.credentials.readRecord(id);
+        if (removedSessionAccounts.has(id) || !isUsableAccountRecord(live) || !sameGrant(live.payload, slot.payload)) {
+          throw accountActionError("account changed", "ACCOUNT_UNAVAILABLE", 409);
+        }
+        return { kind: "grant", payload: { ...live.payload, copilotDefaultEpoch: randomUUID() } };
+      });
+    } catch (error) {
+      if (error?.code === "ACCOUNT_UNAVAILABLE") throw error;
+      throw accountActionError("default account update failed", "DEFAULT_ACCOUNT_FAILED", 500);
+    }
+    void refreshActive();
+    void sync();
+    return { ok: true, defaultAccountId: id };
   });
 
   // 图片加载失败时按 id 请求一次新资料；没有 URL 参数，不能变成头像/认证代理。
@@ -745,17 +747,22 @@ export function apply(ctx) {
     handler: async (req, res) => {
       if (!guard(req, res, "POST")) return;
       let body;
-      try { body = await readJsonBody(req); }
-      catch { json(res, 400, { ok: false, error: "invalid JSON body" }); return; }
-      if (typeof body?.id !== "string" || body.id === "") { json(res, 400, { ok: false, error: "account id required" }); return; }
       try {
-        const { slot } = selectSlot(await listAccountSlots(ctx), { id: body.id });
-        if (slot === undefined) { json(res, 404, { ok: false, error: "no such account" }); return; }
-        const result = await slotProfile(slot, { force: true });
-        if (result.error !== undefined) { json(res, result.code, { ok: false, error: result.error }); return; }
-        const avatarUrl = result.slot.payload.account?.avatarUrl;
-        json(res, 200, { ok: true, ...(typeof avatarUrl === "string" ? { avatarUrl } : {}) });
-      } catch { json(res, 500, { ok: false, error: "profile refresh failed" }); }
+        body = await readJsonBody(req);
+      } catch {
+        json(res, 400, { ok: false, error: "invalid JSON body" });
+        return;
+      }
+      if (typeof body?.id !== "string" || body.id === "") {
+        json(res, 400, { ok: false, error: "account id required" });
+        return;
+      }
+      try {
+        json(res, 200, await refreshProfileById(body.id));
+        notifySessionFeature("reconcile");
+      } catch (error) {
+        json(res, Number.isInteger(error?.status) ? error.status : 500, { ok: false, error: error?.code === "ACCOUNT_UNAVAILABLE" ? "no such account" : "profile refresh failed" });
+      }
     },
   });
 
@@ -768,14 +775,14 @@ export function apply(ctx) {
       try {
         body = await readJsonBody(req);
       } catch (err) {
-        json(res, 400, { ok: false, error: err?.message ?? "invalid body" });
+        json(res, 400, { ok: false, error: "invalid body" });
         return;
       }
       let selection;
       try {
         selection = selectSlot(await listAccountSlots(ctx), body);
       } catch (err) {
-        json(res, 500, { ok: false, error: String(err?.message ?? err) });
+        json(res, 500, { ok: false, error: "account operation failed" });
         return;
       }
       if (selection.error || !selection.specified) {
@@ -788,17 +795,12 @@ export function apply(ctx) {
         return;
       }
       try {
-        // 激活 = 槽位 payload 原子写入主 key；pi-ai 请求路径即读到新账号。
-        await ctx.credentials.modifyRecord(CREDENTIAL_KEY, () => ({ kind: "grant", payload: slot.payload }));
-      } catch (err) {
-        json(res, 500, { ok: false, error: String(err?.message ?? err) });
-        return;
+        await setDefaultAccountById(slot.key);
+        notifySessionFeature("reconcile");
+        json(res, 200, { ok: true });
+      } catch (error) {
+        json(res, Number.isInteger(error?.status) ? error.status : 500, { ok: false, error: "default account update failed" });
       }
-      // 切换后立即刷新 access token（槽位里的 access 可能已过期），
-      // 并重置周期刷新计时器。fire-and-forget，不阻塞激活响应。
-      void refreshActive();
-      void sync();
-      json(res, 200, { ok: true });
     },
   });
 
@@ -813,6 +815,11 @@ export function apply(ctx) {
         body = (await readJsonBody(req)) ?? {};
       } catch {
         body = {};
+      }
+      return serializeGlobalAccountMutation(async () => {
+      if (attempt.status === "running" || signInPending) {
+        json(res, 409, { ok: false, error: "finish or cancel sign-in first" });
+        return;
       }
       try {
         const main = await ctx.credentials.readRecord(CREDENTIAL_KEY).catch(() => undefined);
@@ -835,6 +842,7 @@ export function apply(ctx) {
           slotKey = slots.find((s) => sameGrant(s.payload, mainPayload))?.key;
         }
         if (slotKey !== undefined) {
+          notifySessionFeature("remove", slotKey);
           const hit = slots.find((s) => s.key === slotKey);
           if (hit !== undefined && mainPayload !== undefined && sameGrant(hit.payload, mainPayload)) {
             // 注销的是激活账号：主 key 一并清除，Models 页该路由回到未配置。
@@ -849,8 +857,9 @@ export function apply(ctx) {
         }
         json(res, 200, { ok: true });
       } catch (err) {
-        json(res, 500, { ok: false, error: String(err?.message ?? err) });
+        json(res, 500, { ok: false, error: "account removal failed" });
       }
+      });
     },
   });
 
@@ -871,38 +880,18 @@ export function apply(ctx) {
     },
   });
 
-  // 打开外部 URL（系统默认浏览器）。
-  // Electron 的 <a target="_blank"> 和 window.open 不可靠——主进程可能
-  // 拦截或无 shell.openExternal 配置。host 侧用 child_process.execFile 调
-  // OS 默认浏览器命令，跨平台（win32/darwin/linux）。
+  // OAuth verification link only: validated URL + argv-only OS opener.
+  // No shell interpolation, arbitrary destination or diagnostic URL echo.
   register({
     kind: "exact",
     path: r.open,
     handler: async (req, res) => {
       if (!guard(req, res, "POST")) return;
       let url;
-      try {
-        const body = await readJsonBody(req);
-        if (typeof body?.url !== "string") throw new Error("invalid url");
-        url = new URL(body.url);
-        if (url.protocol !== "https:" || !isGitHubDomain(url.hostname)
-          || url.username || url.password || url.port) throw new Error("invalid url");
-      } catch {
-        json(res, 400, { ok: false, error: "invalid url" });
-        return;
-      }
-      const command = process.platform === "win32"
-        ? join(process.env.SystemRoot ?? "C:\\Windows", "System32", "rundll32.exe")
-        : process.platform === "darwin" ? "open" : "xdg-open";
-      const args = process.platform === "win32" ? ["url.dll,FileProtocolHandler", url.href] : [url.href];
-      try {
-        await new Promise((resolve, reject) => {
-          childProcess.execFile(command, args, { shell: false }, (err) => err ? reject(err) : resolve());
-        });
-        json(res, 200, { ok: true });
-      } catch (err) {
-        json(res, 500, { ok: false, error: String(err?.message ?? err) });
-      }
+      try { url = verificationLink((await readJsonBody(req))?.url); }
+      catch { json(res, 400, { ok: false, error: "invalid verification URL" }); return; }
+      try { await openVerificationLink(url); json(res, 200, { ok: true }); }
+      catch { json(res, 500, { ok: false, error: "verification link could not be opened" }); }
     },
   });
 
@@ -933,7 +922,7 @@ export function apply(ctx) {
         // 失败也写 cache 避免频繁打网络）。summarizeUsage 返回
         // { plan, usage: { percentUsed, resets, ... } } 或 { error }。
         let id = null, login = null, avatarUrl = null;
-        let plan = null, usagePercent = null, usageResetDate = null;
+        let plan = null, usagePercent = null, usageResetDate = null, usageUnlimited = null;
         try {
           const slots = await listAccountSlots(ctx);
           const match = slots.find((s) => sameGrant(s.payload, p));
@@ -948,6 +937,7 @@ export function apply(ctx) {
             if (u && u.error === undefined) {
               plan = u.plan ?? null;
               const usage = u.usage;
+              if (typeof usage?.unlimited === "boolean") usageUnlimited = usage.unlimited;
               if (usage && typeof usage.percentUsed === "number") {
                 // 取整避免浮点误差（上游 69.200000...% 直接透传会显示长串小数）。
                 usagePercent = Math.round(usage.percentUsed);
@@ -968,6 +958,7 @@ export function apply(ctx) {
           expires,
           remaining,
           usagePercent,
+          usageUnlimited,
           usageResetDate,
         });
       } catch {
@@ -986,7 +977,7 @@ export function apply(ctx) {
         await refreshActive();
         json(res, 200, { ok: true });
       } catch (err) {
-        json(res, 500, { ok: false, error: String(err?.message ?? err) });
+        json(res, 500, { ok: false, error: "account operation failed" });
       }
     },
   });
@@ -997,23 +988,36 @@ export function apply(ctx) {
     path: `${ROUTE_PREFIX}/debug`,
     handler: async (req, res) => {
       if (!guard(req, res, "GET")) return;
-      const info = {
-        proxyEnv: {
-          HTTPS_PROXY: process.env.HTTPS_PROXY ?? null,
-          HTTP_PROXY: process.env.HTTP_PROXY ?? null,
-        },
-        proxySetup: globalThis.__copilotAuthProxySetup ?? false,
-        fetchPatched: globalThis.__copilotAuthFetchPatched ?? false,
-      };
-      // 测试 fetch github.com
-      try {
-        const r = await fetch("https://github.com", { signal: AbortSignal.timeout(5000) });
-        info.githubFetch = { ok: r.ok, status: r.status };
-      } catch (err) {
-        info.githubFetch = { error: String(err?.message ?? err) };
-      }
-      json(res, 200, info);
+      json(res, 200, { proxyPolicy: "host-managed",
+        sessionFeature: sessionFeature?.status ?? { phase: "unavailable", errorCode: "POLICY_UNAVAILABLE" } });
     },
+  });
+
+  // Existing global/settings endpoints remain usable without optional Session
+  // services. The feature mounts only in the Host that owns the requested Session.
+  if (typeof ctx.inject === "function") ctx.inject(["loader", "sessionController", "copilotDefaultModelPolicy", "remoteAccess", "sessions", "agents", "sessionProjections", "sessionQuery"], async (child) => {
+    let childClosed = false, feature;
+    child.effect(() => () => {
+      childClosed = true;
+      if (sessionFeature === feature) sessionFeature = undefined;
+      try { return Promise.resolve(feature?.dispose?.()).catch(() => {}); } catch { /* dependency removal must fail closed */ }
+    }, "copilot-auth Session feature ownership");
+    try {
+      const { createSessionAccountFeature } = await import("./session-feature.mjs");
+      if (childClosed || hostDisposed) return;
+      feature = await createSessionAccountFeature(child, {
+        listSlots: async () => (await listAccountSlots(ctx)).filter((slot) => !removedSessionAccounts.has(slot.key)),
+        collectAccounts, refreshProfileById, setDefaultAccountById,
+        getProfile: () => readConfiguredRoute(ctx),
+      });
+      if (childClosed || hostDisposed) { feature.dispose(); return; }
+      sessionFeature = feature;
+      for (const id of removedSessionAccounts) feature.remove(id);
+      for (const id of reactivatedSessionAccounts) await feature.reactivate(id);
+      if (!childClosed && !hostDisposed) await feature.reconcile();
+    } catch {
+      ctx.logger?.warn?.("copilot-auth: Session account feature is unavailable; global account management remains available");
+    }
   });
 }
 
