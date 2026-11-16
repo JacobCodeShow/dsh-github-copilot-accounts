@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import { build } from "esbuild";
 import * as recovery from "../src/avatar-recovery.mjs";
+import * as usageSummary from "../src/usage-summary.mjs";
 
 // Exercise the real plugin entry and badge renderer with synthetic services.
 async function subject(initialState = []) {
@@ -20,6 +21,7 @@ async function subject(initialState = []) {
     if (name === "react-dom") return { createPortal: (node) => node };
     if (name === "react/jsx-runtime") return { jsx: element, jsxs: element, Fragment: "fragment" };
     if (name === "./avatar-recovery.mjs") return recovery;
+    if (name === "./usage-summary.mjs") return usageSummary;
     throw new Error("Unexpected client dependency");
   } };
   vm.runInNewContext(built.outputFiles[0].text, context, { timeout: 5000 });
@@ -55,7 +57,7 @@ test("client apply/dispose/remount releases locale and both public slot registra
   const client = await subject(), f = fixture();
   for (let i = 0; i < 3; i++) {
     const instance = f.owner(); client.apply(instance.ctx);
-    assert.equal(f.dictionaries.size, 1); assert.equal(f.slots.size, 2);
+    assert.equal(f.dictionaries.size, 1); assert.equal(f.slots.size, 3);
     instance.dispose(); assert.equal(f.dictionaries.size, 0); assert.equal(f.slots.size, 0);
   }
 });
@@ -68,7 +70,7 @@ test("partial client startup failure releases its locale on owner disposal", asy
 test("another live locale owner is not swallowed or deleted on failed registration", async () => {
   const client = await subject(), f = fixture(), first = f.owner(), duplicate = f.owner();
   client.apply(first.ctx); assert.throws(() => client.apply(duplicate.ctx), /duplicate locale/);
-  duplicate.dispose(); assert.equal(f.dictionaries.size, 1); assert.equal(f.slots.size, 2);
+  duplicate.dispose(); assert.equal(f.dictionaries.size, 1); assert.equal(f.slots.size, 3);
   first.dispose(); assert.equal(f.dictionaries.size, 0);
 });
 

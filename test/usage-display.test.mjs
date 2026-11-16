@@ -4,6 +4,7 @@ import { readFile } from "node:fs/promises";
 import vm from "node:vm";
 import { build } from "esbuild";
 import * as avatarRecovery from "../src/avatar-recovery.mjs";
+import * as usageSummary from "../src/usage-summary.mjs";
 
 // Compile the actual existing UI; injected hooks expose its render tree without
 // starting a browser, polling accounts, or sending network requests.
@@ -20,6 +21,7 @@ function subject(whoami = {}, open = true) {
       if (name === "react-dom") return { createPortal: (node) => node };
       if (name === "react/jsx-runtime") return { jsx: element, jsxs: element, Fragment: "fragment" };
       if (name === "./avatar-recovery.mjs") return avatarRecovery;
+      if (name === "./usage-summary.mjs") return usageSummary;
       throw new Error("Unexpected UI dependency");
     } };
   vm.runInNewContext(compiled.outputFiles[0].text, context, { timeout: 5000 });
@@ -37,7 +39,7 @@ function text(node) {
   return text(node.props?.children);
 }
 for (const language of ["en", "zh"]) {
-  test(`${language}: settings, collapsed badge and expanded panel show the same used percentage`, () => {
+  test(`${language}: settings compare the used percentage to the UTC month and badge labels stay consistent`, () => {
     for (const value of [0, 25, 80, 81, 100, 23.6, 120]) {
       const s = subject({ configured: true, usagePercent: value, usageUnlimited: false }), t = key => s.DICTS[language][key] ?? key;
       const label = t("quotaUsed").replace("{percent}", String(Math.round(value)));
@@ -49,18 +51,21 @@ for (const language of ["en", "zh"]) {
       assert.ok(all.some(node => node.props?.style?.fontSize === 20 && text(node) === label), "expanded panel uses identical label");
       assert.ok(all.some(node => typeof node.props?.title === "string" && node.props.title.includes(label)), "tooltip uses identical convention");
       assert.equal(pill.props.style?.color === "#e03131", Math.round(value) > 80);
-      for (const tree of [settings, badge]) {
-        const bar = nodes(tree).find(node => node.props?.role === "img");
-        assert.equal(bar.props["aria-label"], label);
-        assert.equal(bar.props.children.props.style.width, `${Math.min(100, value)}%`);
-      }
+      const settingsBar = nodes(settings).find(node => node.props?.role === "img");
+      assert.ok(settingsBar.props["aria-label"].includes(value.toFixed(1)));
+      assert.ok(settingsBar.props["aria-label"].includes(language === "en" ? "UTC month elapsed" : "UTC 本月已过"));
+      assert.ok(nodes(settingsBar).some(node => node.props?.style?.opacity === 0.55
+        && node.props.style.width === `${Math.min(100, value)}%`));
+      const badgeBar = nodes(badge).find(node => node.props?.role === "img");
+      assert.equal(badgeBar.props["aria-label"], label);
+      assert.ok(nodes(badgeBar).some(node => node.props?.style?.width === `${Math.min(100, value)}%`));
     }
   });
   test(`${language}: unknown and unlimited values are never fabricated percentages`, () => {
     for (const percentUsed of [undefined, null, NaN, Infinity, -1, "25"]) {
       const s = subject({ configured: true, usagePercent: percentUsed }), t = key => s.DICTS[language][key] ?? key;
       const settings = s.UsageBlock({ t, plan: "Synthetic", usage: { percentUsed } }), badge = s.CopilotBadge({ t });
-      assert.ok(text(settings).includes(t("quotaUnknown")));
+      assert.ok(text(settings).includes("—"));
       assert.ok(text(badge).includes(t("quotaUnknown")));
       assert.equal(nodes(settings).some(n => n.props?.role === "img"), false);
       assert.equal(nodes(badge).some(n => n.props?.role === "img"), false);
