@@ -2,9 +2,9 @@
 
 为 DSH（DeepSeek Harness）**桌面版**提供 GitHub Copilot **多账号与会话账号绑定**：设备码登录、全局默认、多账号切换、按 Session 固定账号路由、套餐与当前用量展示。当前分支使用 `DSH 0.2.2-rc.1` 的 Settings/ConfigEditor 接口；以前版本的兼容记录不适用于这次接口改动。
 
-## 此分支的范围
+## 当前候选版的范围
 
-PR #4 在原有账号管理基础上添加 **按原生 DSH Session 独立选择 Copilot 账号的路由和 Remote 基础能力**：
+当前候选版包含 PR #4 引入的 **按原生 DSH Session 独立选择 Copilot 账号的路由和 Remote 基础能力**，以及账号外观和设置跳转修复：
 
 - 每个账号使用独立凭据映射，内部仍复用 DSH 的原生 `github-copilot` provider 和协议实现。
 - 固定账号路由与受管理的全局默认路由分离；会话选择不覆盖全局模型偏好。
@@ -12,7 +12,7 @@ PR #4 在原有账号管理基础上添加 **按原生 DSH Session 独立选择 
 - provider replay、推理签名和传输 affinity 按实际账号隔离；切号不删除聊天或工具结果，也不静默重跑整轮/工具。
 - 恢复、普通 fork 和新原生子代理保留对应的会话选择边界；已有子代理不随父会话后续选择重绑。
 
-**此 PR 不包含新的会话账号菜单、原生头像资源池或手动刷新模型按钮。** 底部徽标明确标为“全局默认”，其账号切换动作改变的是全局默认，不是专属 Session 绑定；专用会话 UI 留待后续 PR。
+**此候选版不包含新的会话账号菜单、原生头像资源池或手动刷新模型按钮。** 底部徽标明确标为“全局默认”，其账号切换动作改变的是全局默认，不是专属 Session 绑定；专用会话 UI 留待后续 PR。
 
 ## 特性
 
@@ -43,6 +43,7 @@ PR #4 在原有账号管理基础上添加 **按原生 DSH Session 独立选择 
 ## 前置要求
 
 - 接口验证目标：DSH desktop `0.2.2-rc.1`、Cordis `4.1.x`；其他版本需要额外验证。
+- 本次候选版新增对照 DSH `0.2.2-rc.3` 的账号界面和设置跳转；这不代表真实账号或全部原生能力已验收。
 - 有效的 GitHub Copilot 订阅。
 - DSH 的原生 OAuth、credentials 和普通原生 Session 服务。
 
@@ -50,7 +51,9 @@ PR #4 在原有账号管理基础上添加 **按原生 DSH Session 独立选择 
 
 ## 安装和更新
 
-这是待审阅的源码分支，不代表 npm 已发布新版本。用 DSH 插件管理器安装本地构建包或源码路径；安装、更新、移除后完整退出并重启 DSH。
+当前准备的候选版本为 `0.3.6-dsh-0.2.2-rc.3`，不代表已经 npm 发布。发布前用 DSH 插件管理器安装本地 `.tgz` 验收；发布成功后可从 GitHub Release 的 Assets 下载同名 `.tgz`，或在包安装入口显式指定 `dsh-github-copilot-accounts@next`。安装、更新、移除后完整退出并重启 DSH。
+
+GitHub 自动提供的 Source code `.zip` / `.tar.gz` 是源码归档，不等同于包含客户端构建产物的 npm 安装包。Assets 中的 `.tgz.sha256` 用于验证 `.tgz` 的 SHA-256。`next` 不保证被所有 DSH 市场源隔离；正式安装前检查实际版本与宿主要求。
 
 客户端语言注册随插件生命周期释放。若旧版本已经遗留同名 locale 导致入口消失，需重新加载整个页面或重启；新版本不会删除其他活跃实例的语言资源或吞掉冲突异常。
 
@@ -152,14 +155,20 @@ npm pack --dry-run
 
 测试使用合成 grant、Session、协议或 RPC，不读取用户 credentials 文件，不请求真实账号/模型。JSONL 覆盖 codec/backend read/restore，不证明 writer/fsync/Windows 锁或崩溃恢复。
 
-浏览器验证和新的会话 UI 留在 #7 后续 PR。这里没有 `test:ui` 命令。
+主题和设置跳转已在使用合成账号的独立浏览器页面验证，不代表真实 DSH 窗口或账号端到端验收。新的会话 UI 留在 #7 后续 PR。这里没有 `test:ui` 命令。
 
 ## 发布
 
-版本后缀标记 DSH 接口目标，不代表真实 GHE 验收或已发布 npm 版本。维护者确认后沿用原项目 GitHub Actions Trusted Publishing 流程；本分支不自动推送 release tag 或改变 registry dist-tag。
+版本后缀标记 DSH 接口目标，不代表真实 GHE 验收或已发布 npm 版本。发布采用 GitHub Actions Trusted Publishing；只有推送与清单一致、且提交属于 `master` 的 `v*` tag 才会发包。工作流构建测试后只打包一次，发布该 `.tgz` 到 npm `next`，核对已发布内容，再创建非 Latest 的 GitHub prerelease，并将同一 `.tgz` 和 `.tgz.sha256` 上传为 Assets。
+
+失败重试复用原 tag；已存在的 npm 包和 GitHub 附件必须与本次产物一致，不覆盖不同内容，不重新设置已经提升的渠道。附件全部核验成功前，GitHub Release 保持草稿。npm 查询的网络或认证错误会中止流程，不当作版本未发布。
+
+维护者在真实 `.tgz` 安装验收后，另行批准把同一完整版本提升为 npm `latest` 和 GitHub 正式 Release；工作流不会自动执行这一步。旧版不识别新增 Session 账号路由，切换 dist-tag 不等于已安装实例或会话数据自动回退。
+
+本候选版说明见 [Release notes](docs/releases/0.3.6-dsh-0.2.2-rc.3.md)，完整步骤见 [发布方案](docs/plans/2026-11-17-release-implementation-plan.md)。
 
 ## 版本号规则
 
-版本采用 `<插件核心版本>-dsh-<最近一次验证所基于的 DSH 版本>`，例如 `0.3.5-dsh-0.2.2-rc.1`。`-dsh-` 后缀只表示验证基准，不代表最低支持版本；实际安装兼容范围由 `package.json` 的 `engines.dsh` 声明。该版本尚未发布 npm；发版 tag 应使用 `v0.3.5-dsh-0.2.2-rc.1`。
+版本采用 `<插件核心版本>-dsh-<最近一次验证所基于的 DSH 版本>`，例如 `0.3.6-dsh-0.2.2-rc.3`。`-dsh-` 后缀只表示验证基准，不代表最低支持版本；实际安装兼容范围由 `package.json` 的 `engines.dsh` 声明。当前候选尚未对外发布，tag 应使用 `v0.3.6-dsh-0.2.2-rc.3`；名称含预发布后缀，默认安装渠道由 `next` / `latest` 决定。
 
 MIT
