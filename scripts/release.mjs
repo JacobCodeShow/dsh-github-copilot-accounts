@@ -87,7 +87,7 @@ export function createGithubClient(repository, token, request = fetch) {
   assert.match(repository, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/);
   assert.ok(token, "GitHub token is required for release assets");
   return async (endpoint, { optional404 = false, binary = false } = {}) => {
-    assert.match(endpoint, /^\/(?:releases\/(?:tags\/[^/]+|assets\/[1-9]\d*)|git\/ref\/tags\/[^/]+|git\/tags\/[a-f0-9]{40})$/, "Unexpected GitHub release endpoint");
+    assert.match(endpoint, /^\/(?:releases(?:\?per_page=100&page=[1-9]\d*)?|releases\/(?:[1-9]\d*|tags\/[^/]+|assets\/[1-9]\d*)|git\/ref\/tags\/[^/]+|git\/tags\/[a-f0-9]{40})$/, "Unexpected GitHub release endpoint");
     const response = await request(`https://api.github.com/repos/${repository}${endpoint}`, {
       headers: { Authorization: `Bearer ${token}`, Accept: binary ? "application/octet-stream" : "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
       signal: AbortSignal.timeout(30_000),
@@ -100,8 +100,22 @@ export function createGithubClient(repository, token, request = fetch) {
 
 export function verifyReleaseIdentity(release, tag) {
   assert.ok(release, "GitHub Release is unavailable");
+  assert.ok(Number.isSafeInteger(release.id) && release.id > 0, "Invalid GitHub Release ID");
   assert.equal(release.tag_name, tag, "GitHub Release tag differs");
   assert.ok(Array.isArray(release.assets), "GitHub Release assets are unavailable");
+}
+
+export async function findGithubRelease(github, tag) {
+  const published = await github(`/releases/tags/${encodeURIComponent(tag)}`, { optional404: true });
+  if (published !== null) return published;
+  for (let page = 1; ; page++) {
+    const releases = await github(`/releases?per_page=100&page=${page}`);
+    assert.ok(Array.isArray(releases), "GitHub Release list is unavailable");
+    const matches = releases.filter(release => release.tag_name === tag);
+    assert.ok(matches.length <= 1, "Multiple GitHub releases use the same tag");
+    if (matches.length === 1) return matches[0];
+    if (releases.length < 100) return null;
+  }
 }
 
 export async function verifyGithubTag(github, tag, commit) {
@@ -132,13 +146,13 @@ export async function syncReleaseAssets({ repository, tag, commit, filename, byt
     [`${filename}.sha256`, Buffer.from(`${artifactHashes(bytes).sha256}  ${filename}\n`)],
   ]);
   await verifyGithubTag(github, tag, commit);
-  const endpoint = `/releases/tags/${encodeURIComponent(tag)}`;
-  let release = await github(endpoint, { optional404: true });
+  let release = await findGithubRelease(github, tag);
   if (release === null) {
     run(["release", "create", tag, "--repo", repository, "--target", commit, "--verify-tag", "--draft", "--prerelease", "--latest=false", "--title", tag, "--notes-file", notesPath]);
-    release = await github(endpoint);
+    release = await findGithubRelease(github, tag);
   }
   verifyReleaseIdentity(release, tag);
+  const endpoint = `/releases/${release.id}`;
   if (release.draft) assert.equal(release.prerelease, true, "Draft release must remain a prerelease");
   const verifyAsset = async (asset, content) => {
     assert.ok(Number.isSafeInteger(asset.id) && asset.id > 0, "Invalid GitHub asset identity");
@@ -161,6 +175,9 @@ export async function syncReleaseAssets({ repository, tag, commit, filename, byt
     await verifyAsset(assets[0], content);
   }
   if (release.draft) run(["release", "edit", tag, "--repo", repository, "--draft=false"]);
+  release = await github(endpoint);
+  verifyReleaseIdentity(release, tag);
+  assert.equal(release.draft, false, "GitHub Release is still a draft");
   return release.html_url;
 }
 
