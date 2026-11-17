@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { artifactHashes, createGithubClient, getPublishedVersion, runReleaseCommand, syncReleaseAssets, validatePackedArtifact, validateReleaseManifest, verifyGithubTag, verifyPublishedArtifact } from "../scripts/release.mjs";
+import { artifactHashes, createGithubClient, findGithubRelease, getPublishedVersion, runReleaseCommand, syncReleaseAssets, validatePackedArtifact, validateReleaseManifest, verifyGithubTag, verifyPublishedArtifact } from "../scripts/release.mjs";
 
 const pkg = {
   name: "dsh-github-copilot-accounts", version: "0.3.6-dsh-0.2.2-rc.3",
@@ -112,7 +112,7 @@ const commit = "a".repeat(40);
 const filename = `${pkg.name}-${pkg.version}.tgz`;
 function githubFixture({ existing = false, draft = false, remoteCommit = commit } = {}) {
   const commands = [], contents = new Map();
-  let release = existing ? { tag_name: tag, target_commitish: commit, draft, prerelease: true, assets: [], html_url: "https://github.com/example/plugin/releases/tag/" + tag } : null;
+  let release = existing ? { id: 25, tag_name: tag, target_commitish: commit, draft, prerelease: true, assets: [] } : null;
   const add = name => {
     const id = contents.size + 1;
     contents.set(id, name.endsWith(".sha256") ? Buffer.from(`${artifactHashes(bytes).sha256}  ${filename}\n`) : bytes);
@@ -121,13 +121,19 @@ function githubFixture({ existing = false, draft = false, remoteCommit = commit 
   const github = async (endpoint, options = {}) => {
     if (endpoint.startsWith("/git/ref/tags/")) return { ref: `refs/tags/${tag}`, object: { type: "commit", sha: remoteCommit } };
     if (endpoint.startsWith("/releases/assets/")) return contents.get(Number(endpoint.split("/").at(-1)));
-    assert.equal(endpoint, `/releases/tags/${encodeURIComponent(tag)}`);
-    if (release === null) { assert.equal(options.optional404, true); return null; }
-    return structuredClone(release);
+    const details = () => ({ ...structuredClone(release), html_url: "https://github.com/example/plugin/releases/tag/" + (release.draft ? "untagged-fixture" : tag) });
+    if (endpoint.startsWith("/releases?")) return release === null ? [] : [details()];
+    if (endpoint === `/releases/tags/${encodeURIComponent(tag)}`) {
+      assert.equal(options.optional404, true);
+      return release === null || release.draft ? null : details();
+    }
+    assert.equal(endpoint, "/releases/25");
+    assert.ok(release);
+    return details();
   };
   const run = args => {
     commands.push(args);
-    if (args[1] === "create") release = { tag_name: tag, target_commitish: commit, draft: true, prerelease: true, assets: [], html_url: "https://github.com/example/plugin/releases/tag/" + tag };
+    if (args[1] === "create") release = { id: 25, tag_name: tag, target_commitish: commit, draft: true, prerelease: true, assets: [] };
     if (args[1] === "upload") add(args[3]);
     if (args[1] === "edit") release.draft = false;
   };
@@ -159,6 +165,34 @@ test("a candidate release is published only after both immutable assets are veri
   assert.deepEqual(fixture.release.assets.map(asset => asset.name), [filename, `${filename}.sha256`]);
   assert.equal(fixture.release.draft, false);
   assert.equal(fixture.release.prerelease, true);
+});
+
+test("draft lookup paginates authenticated releases when the tag endpoint returns 404", async () => {
+  const calls = [];
+  const draft = { id: 99, tag_name: tag, draft: true, assets: [] };
+  const result = await findGithubRelease(async endpoint => {
+    calls.push(endpoint);
+    if (endpoint.startsWith("/releases/tags/")) return null;
+    if (endpoint.endsWith("page=1")) return Array.from({ length: 100 }, (_, index) => ({ id: index + 100, tag_name: `other-${index}` }));
+    assert.ok(endpoint.endsWith("page=2"));
+    return [draft];
+  }, tag);
+  assert.equal(result, draft);
+  assert.equal(calls.length, 3);
+  assert.equal(await findGithubRelease(async endpoint => endpoint.startsWith("/releases/tags/") ? null : [], tag), null);
+  await assert.rejects(findGithubRelease(async endpoint => endpoint.startsWith("/releases/tags/") ? null : [draft, draft], tag), /Multiple/);
+  await assert.rejects(findGithubRelease(async endpoint => {
+    if (endpoint.startsWith("/releases/tags/")) return null;
+    throw new Error("release list access denied");
+  }, tag), /access denied/);
+});
+
+test("an existing draft hidden from tag lookup is completed by ID without recreating it", async () => {
+  const fixture = githubFixture({ existing: true, draft: true });
+  const url = await syncReleaseAssets(releaseOptions(), fixture);
+  assert.deepEqual(fixture.commands.map(args => args[1]), ["upload", "upload", "edit"]);
+  assert.ok(url.endsWith(tag));
+  assert.equal(fixture.release.id, 25);
 });
 
 test("release retries reuse identical assets and never overwrite or demote a promoted release", async () => {
