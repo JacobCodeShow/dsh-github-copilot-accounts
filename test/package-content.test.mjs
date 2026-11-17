@@ -30,3 +30,12 @@ test("manifest and lockfile declare the Settings API runtime requirement consist
   assert.equal(pkg.engines.dsh, "^0.2.2-rc.1");
   assert.deepEqual(lock.packages[""].engines, pkg.engines);
 });
+
+test("the release version, lockfile and checked-in candidate notes agree", () => {
+  const lock = JSON.parse(readFileSync(resolve(root, "package-lock.json"), "utf8"));
+  assert.equal(lock.version, pkg.version);
+  assert.equal(lock.packages[""].version, pkg.version);
+  const notes = readFileSync(resolve(root, "docs/releases", `${pkg.version}.md`), "utf8");
+  assert.ok(notes.startsWith(`# ${pkg.version} `));
+  assert.ok(notes.includes(`${pkg.name}-${pkg.version}.tgz`));
+});

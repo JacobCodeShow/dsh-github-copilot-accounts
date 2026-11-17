@@ -1,26 +1,39 @@
-name: Publish to npm (trusted publishing / OIDC)
+name: Publish candidate and GitHub Release
 
 on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.event.deleted == false
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org/"
           package-manager-cache: false
+
+      - name: Validate release tag and master ancestry
+        run: |
+          node scripts/release.mjs validate
+          git fetch --no-tags origin master:refs/remotes/origin/master
+          git merge-base --is-ancestor HEAD origin/master
+          test "$(git rev-parse "$GITHUB_REF_NAME^{commit}")" = "$(git rev-parse HEAD)"
 
       - name: Install deps (prepare/build toolchain)
         # cordis 是运行时由 DSH 宿主提供的 peer，发布构建不需要安装
@@ -32,29 +45,34 @@ jobs:
           node --version
           npm --version
 
-      - name: Check version not already published
-        id: check
-        run: |
-          PKG_VERSION=$(node -p "require('./package.json').version")
-          PKG_NAME=$(node -p "require('./package.json').name")
-          if npm view "$PKG_NAME@$PKG_VERSION" version >/dev/null 2>&1; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::$PKG_NAME@$PKG_VERSION already published (e.g. manual bootstrap); skipping publish."
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "Publishing $PKG_NAME@$PKG_VERSION"
-          fi
-
       - name: Build and test
         run: |
           npm run build
           npm test
 
-      # npm detects the GitHub OIDC environment and creates a short-lived publish credential.
-      # 预发布版本号（含 - 后缀）必须显式 --tag，显式挂到 latest 使默认安装拿到该版。
-      - name: Publish
-        if: steps.check.outputs.exists != 'true'
-        run: npm publish --access public --tag latest
+      - name: Pack and verify the single release artifact
+        id: artifact
+        run: |
+          npm pack --json --ignore-scripts > "$RUNNER_TEMP/copilot-pack.json"
+          node scripts/release.mjs artifact "$RUNNER_TEMP/copilot-pack.json"
+
+      - name: Check exact npm version and immutable integrity
+        id: registry
+        run: node scripts/release.mjs registry "$RUNNER_TEMP/copilot-pack.json"
+
+      - name: Publish candidate to npm next (OIDC)
+        if: steps.registry.outputs.exists == 'false'
+        env:
+          TARBALL: ${{ steps.artifact.outputs.filename }}
+        run: npm publish "./$TARBALL" --access public --tag next
+
+      - name: Verify the npm published bytes
+        run: node scripts/release.mjs verify-published "$RUNNER_TEMP/copilot-pack.json"
+
+      - name: Create or complete GitHub prerelease with verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release.mjs github "$RUNNER_TEMP/copilot-pack.json"
 
 # Configure this exact publisher in npm package settings:
 # GitHub Actions / <owner> / <repo> / release.yml / no environment.
