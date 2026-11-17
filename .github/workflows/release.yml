@@ -1,4 +1,4 @@
-name: Publish candidate and GitHub Release
+name: Publish GitHub candidate and optional npm package
 
 on:
   push:
@@ -6,17 +6,21 @@ on:
       - "v*"
 
 permissions:
-  contents: write
-  id-token: write
+  contents: read
 
 concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
+  github-release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.event.deleted == false
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      artifact_id: ${{ steps.bundle.outputs.artifact-id }}
+      filename: ${{ steps.artifact.outputs.filename }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -25,7 +29,6 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "24"
-          registry-url: "https://registry.npmjs.org/"
           package-manager-cache: false
 
       - name: Validate release tag and master ancestry
@@ -39,7 +42,7 @@ jobs:
         # cordis 是运行时由 DSH 宿主提供的 peer，发布构建不需要安装
         run: npm ci --legacy-peer-deps --no-audit --no-fund
 
-      - name: Ensure npm supports trusted publishing
+      - name: Use the tested packaging npm version
         run: |
           npm install --global npm@12.2.2
           node --version
@@ -55,24 +58,75 @@ jobs:
         run: |
           npm pack --json --ignore-scripts > "$RUNNER_TEMP/copilot-pack.json"
           node scripts/release.mjs artifact "$RUNNER_TEMP/copilot-pack.json"
-
-      - name: Check exact npm version and immutable integrity
-        id: registry
-        run: node scripts/release.mjs registry "$RUNNER_TEMP/copilot-pack.json"
-
-      - name: Publish candidate to npm next (OIDC)
-        if: steps.registry.outputs.exists == 'false'
-        env:
-          TARBALL: ${{ steps.artifact.outputs.filename }}
-        run: npm publish "./$TARBALL" --access public --tag next
-
-      - name: Verify the npm published bytes
-        run: node scripts/release.mjs verify-published "$RUNNER_TEMP/copilot-pack.json"
+          cp "$RUNNER_TEMP/copilot-pack.json" copilot-pack.json
 
       - name: Create or complete GitHub prerelease with verified assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: node scripts/release.mjs github "$RUNNER_TEMP/copilot-pack.json"
+
+      - name: Preserve the verified package for optional npm publication
+        id: bundle
+        if: vars.NPM_PUBLISH_ENABLED == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-${{ github.sha }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.artifact.outputs.filename }}
+            ${{ steps.artifact.outputs.filename }}.sha256
+            copilot-pack.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 30
+
+  npm:
+    needs: github-release
+    if: vars.NPM_PUBLISH_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org/"
+          package-manager-cache: false
+
+      - name: Use the tested publishing npm version
+        run: npm install --global npm@12.2.2
+
+      - name: Download the exact verified GitHub package
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ needs.github-release.outputs.artifact_id }}
+          path: .
+          merge-multiple: true
+
+      - name: Revalidate the downloaded package without repacking
+        run: node scripts/release.mjs artifact copilot-pack.json
+
+      - name: Check exact npm version and immutable integrity
+        id: registry
+        run: node scripts/release.mjs registry copilot-pack.json
+
+      - name: Publish candidate to npm next (OIDC)
+        if: steps.registry.outputs.exists == 'false'
+        env:
+          TARBALL: ${{ needs.github-release.outputs.filename }}
+        run: npm publish "./$TARBALL" --access public --tag next
+
+      - name: Verify the npm published bytes
+        run: node scripts/release.mjs verify-published copilot-pack.json
+
+      - name: Report optional npm publication status
+        if: always()
+        env:
+          NPM_JOB_STATUS: ${{ job.status }}
+        run: |
+          echo "## Optional npm publication" >> "$GITHUB_STEP_SUMMARY"
+          echo "Status: $NPM_JOB_STATUS. GitHub Release assets were published independently." >> "$GITHUB_STEP_SUMMARY"
 
 # Configure this exact publisher in npm package settings:
 # GitHub Actions / <owner> / <repo> / release.yml / no environment.
