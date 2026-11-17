@@ -27,8 +27,15 @@ export function artifactHashes(bytes) {
 }
 
 export function validatePackedArtifact(pkg, rows, bytes, hostFiles) {
-  assert.equal(rows.length, 1, "Pack must produce exactly one tarball");
-  const pack = rows[0];
+  assert.ok(rows !== null && typeof rows === "object", "Pack metadata must be an array or package-name map");
+  let packs = rows;
+  if (!Array.isArray(rows)) {
+    assert.deepEqual(Object.keys(rows), [pkg.name], "Pack metadata must contain only the expected package");
+    packs = [rows[pkg.name]];
+  }
+  assert.equal(packs.length, 1, "Pack must produce exactly one tarball");
+  const pack = packs[0];
+  assert.ok(pack !== null && typeof pack === "object" && !Array.isArray(pack), "Invalid packed package metadata");
   const filename = `${pkg.name.replace(/^@/, "").replace("/", "-")}-${pkg.version}.tgz`;
   assert.equal(pack.filename, filename, "Unexpected tarball filename");
   assert.equal(pack.name, pkg.name, "Packed package name differs");
