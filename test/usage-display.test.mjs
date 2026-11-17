@@ -38,6 +38,22 @@ function text(node) {
   if (Array.isArray(node)) return node.map(text).join("");
   return text(node.props?.children);
 }
+test("badge popup follows the native DSH menu material", () => {
+  const s = subject({ configured: true, usagePercent: 32 });
+  const tree = s.CopilotBadge({ t: key => s.DICTS.en[key] ?? key });
+  const popup = nodes(tree).find(node => node.props?.role === "dialog");
+  assert.ok(popup);
+  assert.equal(popup.props["aria-label"], s.DICTS.en.nav);
+  assert.equal(popup.props.style.background, "var(--dsw-specific-menu, var(--dsw-alias-bg-base, var(--background, #fff)))");
+  assert.equal(popup.props.style.backdropFilter, "var(--dsw-menu-backdrop-filter, none)");
+  assert.equal(popup.props.style.color, "var(--dsw-alias-label-secondary, var(--foreground, #1a1a1a))");
+  assert.equal(popup.props.style["--dsw-elevation-stroke-color"], "var(--dsw-alias-border-l1, rgba(128,128,128,0.1))");
+  assert.equal(popup.props.style.border, 0);
+  assert.equal(popup.props.style.borderRadius, "var(--dsw-radius-lg, 16px)");
+  assert.equal(popup.props.style.boxShadow, "var(--dsw-elevation-prominent, 0 4px 12px rgba(0,0,0,0.15))");
+  assert.equal(popup.props.style.width, "max-content");
+  assert.equal(popup.props.style.minWidth, "min(300px, calc(100vw - 24px))");
+});
 for (const language of ["en", "zh"]) {
   test(`${language}: settings compare the used percentage to the UTC month and badge labels stay consistent`, () => {
     for (const value of [0, 25, 80, 81, 100, 23.6, 120]) {
@@ -50,7 +66,7 @@ for (const language of ["en", "zh"]) {
       assert.equal(text(pill), label);
       assert.ok(all.some(node => node.props?.style?.fontSize === 20 && text(node) === label), "expanded panel uses identical label");
       assert.ok(all.some(node => typeof node.props?.title === "string" && node.props.title.includes(label)), "tooltip uses identical convention");
-      assert.equal(pill.props.style?.color === "#e03131", Math.round(value) > 80);
+      assert.equal(pill.props.style?.color === "var(--dsw-alias-state-error-primary, #e03131)", Math.round(value) > 80);
       const settingsBar = nodes(settings).find(node => node.props?.role === "img");
       assert.ok(settingsBar.props["aria-label"].includes(value.toFixed(1)));
       assert.ok(settingsBar.props["aria-label"].includes(language === "en" ? "UTC month elapsed" : "UTC 本月已过"));

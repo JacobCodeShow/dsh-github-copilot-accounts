@@ -198,7 +198,7 @@ const PLUS_SVG =
 
 // octicons check-16（MIT，github/primer）——状态列表已完成步骤
 const CHECK_SVG =
-  '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="flex:none;color:#2ea44f">' +
+  '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="flex:none;color:var(--dsw-alias-state-success-primary, #2ea44f)">' +
   '<path d="M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"/></svg>';
 
 // octicons globe-16（MIT，github/primer）——状态列表"已打开"步骤
@@ -226,69 +226,72 @@ function SettingsCopilotIcon({ size = 20 }) {
 }
 
 const styles = {
-  section: { maxWidth: 720, display: "flex", flexDirection: "column", gap: 12, fontFamily: "inherit" },
+  section: { maxWidth: 720, display: "flex", flexDirection: "column", gap: 12, fontFamily: "inherit",
+    color: "var(--dsw-alias-label-primary, inherit)" },
   headerRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 },
   title: { margin: 0, fontSize: 16, fontWeight: 500, lineHeight: "24px" },
   intro: { margin: 0, fontSize: 14, lineHeight: "22px", opacity: 0.75 },
   button: { height: 32, padding: "0 14px", fontSize: 14, borderRadius: 16, border: "none",
     cursor: "pointer", fontFamily: "inherit" },
-  primary: { background: "#4c6ef5", color: "#fff" },
+  primary: { background: "var(--dsw-alias-button-primary-fill, #4c6ef5)", color: "var(--dsw-alias-label-primary-foreground, #fff)" },
   secondary: { background: "transparent", color: "inherit", border: "1px solid currentColor", opacity: 0.8 },
   addButton: { height: 32, padding: "0 14px", fontSize: 14, borderRadius: 16, cursor: "pointer",
-    fontFamily: "inherit", background: "transparent", color: "inherit", border: "1px solid rgba(128,128,128,0.45)" },
-  card: { border: "1px solid rgba(128,128,128,0.35)", borderRadius: 12, padding: "12px 14px",
+    fontFamily: "inherit", background: "transparent", color: "inherit", border: "1px solid var(--dsw-alias-border-l4, rgba(128,128,128,0.45))" },
+  card: { border: "1px solid var(--dsw-alias-settings-card-stroke, var(--dsw-alias-border-l4, rgba(128,128,128,0.35)))",
+    background: "var(--dsw-alias-settings-card-fill, var(--dsw-alias-bg-layer-2, transparent))", borderRadius: 12, padding: "12px 14px",
     display: "flex", flexDirection: "column", gap: 10 },
   cardTop: { display: "flex", alignItems: "center", gap: 12 },
-  avatar: { borderRadius: "50%", flex: "none", objectFit: "cover", background: "rgba(128,128,128,0.25)" },
+  avatar: { borderRadius: "50%", flex: "none", objectFit: "cover", background: "var(--dsw-alias-bg-skeleton, rgba(128,128,128,0.25))" },
   avatarFallback: { borderRadius: "50%", flex: "none", display: "flex", alignItems: "center",
-    justifyContent: "center", background: "rgba(128,128,128,0.25)", color: "inherit", fontWeight: 600 },
+    justifyContent: "center", background: "var(--dsw-alias-bg-skeleton, rgba(128,128,128,0.25))", color: "inherit", fontWeight: 600 },
   who: { flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 },
   nameRow: { display: "flex", alignItems: "center", gap: 8, minWidth: 0 },
   name: { fontSize: 14, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
   badge: { flex: "none", fontSize: 12, lineHeight: "18px", padding: "0 8px", borderRadius: 9,
-    background: "rgba(128,128,128,0.18)" },
+    background: "var(--dsw-alias-interactive-bg-hover, rgba(128,128,128,0.18))" },
   sub: { margin: 0, fontSize: 13, lineHeight: "20px", opacity: 0.7 },
   dots: { flex: "none", width: 32, height: 32, borderRadius: "50%", border: "none", background: "transparent",
     color: "inherit", fontSize: 16, cursor: "pointer", opacity: 0.75 },
   menu: { position: "absolute", right: 0, top: 36, zIndex: 10, minWidth: 200, padding: 4,
-    background: "var(--background, #fff)", color: "var(--foreground, #1a1a1a)",
-    border: "1px solid rgba(128,128,128,0.4)", borderRadius: 10, boxShadow: "0 8px 24px rgba(0,0,0,0.18)",
+    background: "var(--dsw-specific-menu, var(--dsw-alias-bg-layer-1, #fff))",
+    backdropFilter: "var(--dsw-menu-backdrop-filter, none)", color: "var(--dsw-alias-label-primary, #1a1a1a)",
+    border: 0, borderRadius: 10, boxShadow: "var(--dsw-elevation-prominent, 0 8px 24px rgba(0,0,0,0.18))",
     display: "flex", flexDirection: "column", gap: 2 },
   menuItem: { display: "block", width: "100%", textAlign: "left", padding: "8px 10px", fontSize: 14,
     border: "none", borderRadius: 8, background: "transparent", color: "inherit", cursor: "pointer",
     fontFamily: "inherit" },
   menuItemDisabled: { opacity: 0.45, cursor: "default" },
-  menuItemDanger: { color: "#e03131" },
+  menuItemDanger: { color: "var(--dsw-alias-state-error-primary, #e03131)" },
   backdrop: { position: "fixed", inset: 0, zIndex: 9, background: "transparent" },
   menuDesc: { fontSize: 12, lineHeight: "18px", opacity: 0.7, marginTop: 2 },
   planBlock: { display: "flex", flexDirection: "column", gap: 6, paddingTop: 4,
-    borderTop: "1px solid rgba(128,128,128,0.25)" },
+    borderTop: "1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25))" },
   planTitle: { fontSize: 13, lineHeight: "20px", opacity: 0.7 },
   planValue: { fontSize: 14, lineHeight: "22px", fontWeight: 500 },
   creditsRow: { display: "flex", alignItems: "center", justifyContent: "space-between",
     fontSize: 13, lineHeight: "20px" },
-  barTrack: { height: 6, borderRadius: 3, background: "rgba(128,128,128,0.25)", overflow: "hidden" },
-  barFill: { height: "100%", borderRadius: 3, background: "#4c6ef5" },
+  barTrack: { height: 6, borderRadius: 3, background: "var(--dsw-alias-border-l2, rgba(128,128,128,0.25))", overflow: "hidden" },
+  barFill: { height: "100%", borderRadius: 3, background: "var(--dsw-alias-state-business-primary, #4c6ef5)" },
   muted: { margin: 0, fontSize: 12, lineHeight: "18px", opacity: 0.6 },
   codeHint: { margin: 0, fontSize: 13, lineHeight: "20px", opacity: 0.85 },
   codeRow: { display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" },
   code: { fontSize: 24, fontWeight: 700, letterSpacing: 2, fontVariantNumeric: "tabular-nums" },
-  link: { fontSize: 13, color: "#4c6ef5" },
-  error: { margin: 0, fontSize: 13, lineHeight: "20px", color: "#e03131" },
+  link: { fontSize: 13, color: "var(--dsw-alias-link, #4c6ef5)" },
+  error: { margin: 0, fontSize: 13, lineHeight: "20px", color: "var(--dsw-alias-state-error-primary, #e03131)" },
   // 错误卡片（参考 GitHub Copilot desktop Authorization failed 样式）
-  errorCard: { border: "1px solid rgba(128,128,128,0.35)", borderRadius: 12, padding: "16px 18px",
+  errorCard: { border: "1px solid var(--dsw-alias-border-l4, rgba(128,128,128,0.35))", borderRadius: 12, padding: "16px 18px",
     display: "flex", flexDirection: "column", gap: 14 },
   errorCardTitle: { margin: 0, fontSize: 16, fontWeight: 600, lineHeight: "24px" },
   errorCardDesc: { margin: 0, fontSize: 14, lineHeight: "22px", opacity: 0.7 },
   alertBox: { display: "flex", alignItems: "flex-start", gap: 10, padding: "10px 14px",
-    borderRadius: 8, background: "#FEF2F2", border: "1px solid #FECACA",
-    color: "#991B1B", fontSize: 13, lineHeight: "20px" },
+    borderRadius: 8, background: "var(--dsw-alias-code-diff-deleted, #FEF2F2)", border: "1px solid var(--dsw-alias-state-error-primary, #FECACA)",
+    color: "var(--dsw-alias-state-error-primary, #991B1B)", fontSize: 13, lineHeight: "20px" },
   alertIcon: { flex: "none", width: 16, height: 16, borderRadius: "50%",
-    background: "#DC2626", color: "#fff", display: "flex", alignItems: "center",
+    background: "var(--dsw-alias-state-error-primary, #DC2626)", color: "var(--dsw-alias-label-on-color, #fff)", display: "flex", alignItems: "center",
     justifyContent: "center", fontSize: 11, fontWeight: 700, marginTop: 2 },
   errorActions: { display: "flex", alignItems: "center", gap: 10 },
   input: { flex: 1, minWidth: 180, height: 32, padding: "0 10px", fontSize: 14, borderRadius: 8,
-    border: "1px solid rgba(128,128,128,0.45)", background: "transparent", color: "inherit",
+    border: "1px solid var(--dsw-alias-border-l4, rgba(128,128,128,0.45))", background: "transparent", color: "inherit",
     fontFamily: "inherit" },
 };
 
@@ -354,8 +357,8 @@ function SettingsUsageSummary({ accounts, month, t }) {
     </div>}
     <div data-usage-month title={t("settingsMonthHint")} style={styles.muted}>{label}</div>
     <div data-usage-legend style={{ ...styles.muted, display: "flex", flexWrap: "wrap", gap: 12 }}>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><i aria-hidden="true" style={{ width: 7, height: 7, borderRadius: "50%", background: "#4c6ef5" }} />{t("settingsUsedLegend")}</span>
-      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><i aria-hidden="true" style={{ width: 7, height: 7, background: "#d9a441", transform: "rotate(45deg)" }} />{t("settingsMonthLegend").replace("{percent}", month.elapsedPercent.toFixed(1))}</span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><i aria-hidden="true" style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--dsw-alias-state-business-primary, #4c6ef5)" }} />{t("settingsUsedLegend")}</span>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}><i aria-hidden="true" style={{ width: 7, height: 7, background: "var(--dsw-alias-state-warn-primary, #d9a441)", transform: "rotate(45deg)" }} />{t("settingsMonthLegend").replace("{percent}", month.elapsedPercent.toFixed(1))}</span>
     </div>
   </div>;
 }
@@ -368,7 +371,7 @@ function UsageBlock({ t, plan, usage, usageError, month = utcMonthProgress() }) 
   const resets = typeof usage?.resets === "string" && usage.resets !== "";
   const title = resets ? t("settingsCreditsReset").replace("{date}", usage.resets) : t("credits");
   const comparison = t("settingsCompare").replace("{used}", percent === null ? "—" : percent.toFixed(1)).replace("{time}", month.elapsedPercent.toFixed(1));
-  const marker = { position: "absolute", top: "50%", transform: "translate(-50%, -50%)", border: "1px solid var(--dsh-bg, #fff)" };
+  const marker = { position: "absolute", top: "50%", transform: "translate(-50%, -50%)", border: "1px solid var(--dsw-alias-settings-card-fill, var(--dsw-alias-bg-layer-2, #fff))" };
   return <div style={styles.planBlock}>
     {plan !== undefined && <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
       <span style={styles.planTitle}>{t("plan")}</span><span style={styles.planValue}>{plan}</span>
@@ -379,8 +382,8 @@ function UsageBlock({ t, plan, usage, usageError, month = utcMonthProgress() }) 
     </div>}
     {percent !== null && <div data-usage-track role="img" aria-label={comparison} title={comparison} style={{ ...styles.barTrack, position: "relative", overflow: "visible", margin: "5px 0" }}>
       <div style={{ ...styles.barFill, borderRadius: "inherit", width: `${Math.min(100, percent)}%`, opacity: 0.55 }} />
-      <span data-usage-marker style={{ ...marker, left: `${Math.min(100, percent)}%`, width: 9, height: 9, borderRadius: "50%", background: "#4c6ef5", zIndex: 2 }} />
-      <span data-month-marker style={{ ...marker, left: `${month.elapsedPercent}%`, width: 8, height: 8, background: "#d9a441", transform: "translate(-50%, -50%) rotate(45deg)" }} />
+      <span data-usage-marker style={{ ...marker, left: `${Math.min(100, percent)}%`, width: 9, height: 9, borderRadius: "50%", background: "var(--dsw-alias-state-business-primary, #4c6ef5)", zIndex: 2 }} />
+      <span data-month-marker style={{ ...marker, left: `${month.elapsedPercent}%`, width: 8, height: 8, background: "var(--dsw-alias-state-warn-primary, #d9a441)", transform: "translate(-50%, -50%) rotate(45deg)" }} />
     </div>}
   </div>;
 }
@@ -813,7 +816,7 @@ function CopilotSection({ t = (key) => DICTS.en[key] ?? key }) {
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             {codeUrl && (
               <button type="button"
-                style={{ ...styles.button, background: "#2ea44f", color: "#fff", border: "none" }}
+                style={{ ...styles.button, ...styles.primary }}
                 onClick={() => openSite(codeUrl)}>
                 {t("openSite").replace("{target}", signing.domain ?? t("optGithub"))}
               </button>
@@ -893,107 +896,62 @@ const BADGE_COPILOT_SVG =
   '<path d="M7.998 15.035c-4.562 0-7.873-2.914-7.998-3.749V9.338c.085-.628.677-1.686 1.588-2.065.013-.07.024-.143.036-.218.029-.183.06-.384.126-.612-.201-.508-.254-1.084-.254-1.656 0-.87.128-1.769.693-2.484.579-.733 1.494-1.124 2.724-1.261 1.206-.134 2.262.034 2.944.765.05.053.096.108.139.165.044-.057.094-.112.143-.165.682-.731 1.738-.899 2.944-.765 1.23.137 2.145.528 2.724 1.261.566.715.693 1.614.693 2.484 0 .572-.053 1.148-.254 1.656.066.228.098.429.126.612.924.385 1.522 1.471 1.591 2.095v1.872c0 .766-3.351 3.795-8.002 3.795Zm0-1.485c2.28 0 4.584-1.11 5.002-1.433V7.862l-.023-.116c-.49.21-1.075.291-1.727.291-1.146 0-2.059-.327-2.71-.991A3.222 3.222 0 0 1 8 6.303a3.24 3.24 0 0 1-.544.743c-.65.664-1.563.991-2.71.991-.652 0-1.236-.081-1.727-.291l-.023.116v4.255c.419.323 2.722 1.433 5.002 1.433ZM6.762 2.83c-.193-.206-.637-.413-1.682-.297-1.019.113-1.479.404-1.713.7-.247.312-.369.789-.369 1.554 0 .793.129 1.171.308 1.371.162.181.519.379 1.442.379.853 0 1.339-.235 1.638-.54.315-.322.527-.827.617-1.553.117-.935-.037-1.395-.241-1.614Zm4.155-.297c-1.044-.116-1.488.091-1.681.297-.204.219-.358.679-.242 1.614.091.726.303 1.231.618 1.553.299.305.784.54 1.638.54.922 0 1.28-.198 1.442-.379.179-.2.308-.578.308-1.371 0-.765-.123-1.242-.37-1.554-.233-.296-.693-.587-1.713-.7Z"/>' +
   '<path d="M6.25 9.037a.75.75 0 0 1 .75.75v1.501a.75.75 0 0 1-1.5 0V9.787a.75.75 0 0 1 .75-.75Zm4.25.75v1.501a.75.75 0 0 1-1.5 0V9.787a.75.75 0 0 1 1.5 0Z"/></svg>';
 
-// 打开 DSH 设置页并定位到 Copilot section。
-// DSH desktop 没有公开 API 让外部组件打开设置页（SettingsRoot 的 open 状态
-// 是 component-local React state，不在任何 store 里），所以只能走 DOM：
-// 1. 点击侧栏「账号菜单」trigger（aria-haspopup="menu"，宽栏文字「更多」）
-// 2. 在 portal 菜单里点 button[role="menuitem"]「设置」
-// 3. 等 [role="dialog"] 设置面板渲染，再点 nav 里文本含 "copilot" 的 section
-// 全程输出 console.log/warn，便于在 DevTools 排查 DOM 选择器失配。
 async function openCopilotSettings() {
-  // 菜单是 portal 渲染，且 primitives Menu 会同时挂一份 visibility:hidden 的
-  // 测量副本，必须只认屏幕上真实可见、有尺寸的元素。
   const isVisible = (el) => {
-    if (el.closest('[aria-hidden="true"]')) return false;
+    if (el.closest('[aria-hidden="true"], [hidden], [inert]')) return false;
+    const computed = el.ownerDocument?.defaultView?.getComputedStyle(el);
+    if (computed?.visibility === "hidden" || computed?.visibility === "collapse" || computed?.display === "none") return false;
     const rect = el.getBoundingClientRect();
     return rect.width > 0 && rect.height > 0;
   };
-  // MutationObserver 等待 check() 返回非空，比固定 setTimeout 稳。
   const waitFor = (check, timeout) => new Promise((resolve) => {
     const existing = check();
     if (existing) { resolve(existing); return; }
+    const finish = (value) => {
+      observer.disconnect();
+      clearTimeout(timer);
+      resolve(value);
+    };
     const observer = new MutationObserver(() => {
       const el = check();
-      if (el) { observer.disconnect(); resolve(el); }
+      if (el) finish(el);
     });
-    observer.observe(document.body, { childList: true, subtree: true });
-    setTimeout(() => { observer.disconnect(); resolve(null); }, timeout);
+    const timer = setTimeout(() => finish(null), timeout);
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true });
+  });
+  const findPanel = () => Array.from(document.querySelectorAll('[data-shortcut-modal="settings"][role="dialog"]')).find(isVisible);
+  const findSection = () => Array.from(findPanel()?.querySelectorAll("nav button") ?? []).find((button) => {
+    const label = (button.textContent ?? "").trim().toLowerCase();
+    return isVisible(button) && (label === DICTS.en.nav.toLowerCase() || label === DICTS.zh.nav.toLowerCase());
   });
   try {
-    // DSH desktop 0.1.7 的设置入口在侧栏「账号菜单」里：
-    //   trigger 是 button[aria-haspopup="menu"]，aria-label 随语言为
-    //   「账号菜单」/「Account menu」；窄栏只有省略号图标，宽栏文字「更多」。
-    const moreButton = Array.from(document.querySelectorAll("button"))
-      .find((b) => {
-        if (!isVisible(b)) return false;
-        const label = b.getAttribute("aria-label");
-        const text = (b.textContent || "").trim();
-        return label === "账号菜单" || label === "Account menu" || text === "更多" || text === "More";
+    if (!findPanel()) {
+      const accountMenu = Array.from(document.querySelectorAll('button[aria-haspopup="menu"]')).find((button) => {
+        const label = button.getAttribute("aria-label");
+        return isVisible(button) && (label === "账号菜单" || label === "Account menu");
       });
-    if (!moreButton) {
-      console.warn("[copilot-auth] account-menu ('更多') button not found");
-      return;
-    }
-    console.log("[copilot-auth] found account-menu button, clicking to open menu");
-    moreButton.click();
-
-    // 菜单项 button[role="menuitem"] 内部结构 = 图标 span + 文本 span +
-    // 可选快捷键 kbd 串（Win 默认绑定 Ctrl+,，故整串 textContent 是
-    // 「设置Ctrl,」而非「设置」），只能用前缀匹配，且只点可见的那份。
-    // 最多等 2.5 秒。
-    const settingsItem = await waitFor(() => {
-      const candidates = document.querySelectorAll('button[role="menuitem"], [role="menuitem"]');
-      for (const el of candidates) {
-        if (!isVisible(el)) continue;
-        const text = (el.textContent || "").trim();
-        if (text === "设置" || text.startsWith("设置") || text === "Settings" || text.startsWith("Settings")) {
-          return el;
+      if (!accountMenu) {
+        console.warn("[copilot-auth] account-menu button not found");
+        return;
+      }
+      if (accountMenu.getAttribute("aria-expanded") !== "true") accountMenu.click();
+      const settingsItem = await waitFor(() => {
+        const candidates = document.querySelectorAll('[role="menu"] [role="menuitem"]');
+        for (const item of candidates) {
+          const label = (item.textContent ?? "").trim();
+          if (isVisible(item) && (label.startsWith("设置") || label.startsWith("Settings"))) return item;
         }
+        return null;
+      }, 2500);
+      if (!settingsItem) {
+        console.warn("[copilot-auth] Settings menu item not found");
+        return;
       }
-      return null;
-    }, 2500);
-
-    if (!settingsItem) {
-      console.warn("[copilot-auth] '设置' menu item not found after opening account menu");
-      return;
+      settingsItem.click();
     }
-    console.log("[copilot-auth] found '设置' menu item, clicking to open settings panel");
-    settingsItem.click();
-
-    // 等「设置面板」就绪：可见的 [role="dialog"] 出现且内部 nav button 渲染完。
-    // React 渲染是异步的，dialog 元素先出现 nav 子树后渲染，必须等 nav
-    // button 有了再匹配。超时 5 秒。
-    const panel = await waitFor(() => {
-      const dialogs = document.querySelectorAll('[role="dialog"]');
-      for (const d of dialogs) {
-        if (!isVisible(d)) continue;
-        if (d.querySelectorAll("nav button").length > 0) return d;
-      }
-      return null;
-    }, 5000);
-
-    if (!panel) {
-      console.warn("[copilot-auth] settings panel with nav did not appear within 5s");
-      return;
-    }
-    console.log("[copilot-auth] settings panel rendered");
-
-    // SettingsRoot.tsx L78 navCell 的 textContent = icon + label，
-    // 本节 label = "Copilot 账号"/"Copilot Accounts"，小写后含 "copilot"。
-    const navButtons = panel.querySelectorAll("nav button");
-    const target = Array.from(navButtons).find((b) => {
-      const text = (b.textContent || "").toLowerCase();
-      return text.includes("copilot");
-    });
-
-    if (target) {
-      console.log("[copilot-auth] matched nav button:", target.textContent);
-      target.click();
-    } else {
-      console.warn("[copilot-auth] no nav button matched 'copilot'");
-      console.log("[copilot-auth] available nav texts:",
-        Array.from(navButtons).map((b) => b.textContent));
-    }
+    const target = await waitFor(findSection, 5000);
+    if (target) target.click();
+    else console.warn("[copilot-auth] Copilot accounts settings section not found");
   } catch (err) {
     console.warn("[copilot-auth] openCopilotSettings error:", err);
   }
@@ -1007,7 +965,7 @@ function AccountAvatar({ id, url, login, size = 18, onRecovered }) {
   const box = {
     width: size, height: size, borderRadius: "50%", flex: "none",
     display: "inline-flex", alignItems: "center", justifyContent: "center",
-    overflow: "hidden", background: "#adb5bd",
+    overflow: "hidden", background: "var(--dsw-alias-bg-skeleton, #adb5bd)",
   };
   if (image.source && !image.failed) {
     return (
@@ -1024,7 +982,7 @@ function AccountAvatar({ id, url, login, size = 18, onRecovered }) {
     );
   }
   return (
-    <span style={{ ...box, fontSize: Math.round(size * 0.55), color: "#fff", fontWeight: 600 }}>
+    <span style={{ ...box, fontSize: Math.round(size * 0.55), color: "var(--dsw-alias-label-primary, #fff)", fontWeight: 600 }}>
       {(login ?? "?")[0]?.toUpperCase() ?? "?"}
     </span>
   );
@@ -1101,9 +1059,15 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
     position: "fixed",
     left: badgeRect.left,
     bottom: window.innerHeight - badgeRect.top + 4,
-    background: "var(--dsh-bg, #fff)", border: "1px solid rgba(128,128,128,0.3)",
-    borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
-    padding: 0, minWidth: 280, maxWidth: 320, zIndex: 100001,
+    background: "var(--dsw-specific-menu, var(--dsw-alias-bg-base, var(--background, #fff)))",
+    backdropFilter: "var(--dsw-menu-backdrop-filter, none)",
+    color: "var(--dsw-alias-label-secondary, var(--foreground, #1a1a1a))",
+    "--dsw-elevation-stroke-color": "var(--dsw-alias-border-l1, rgba(128,128,128,0.1))",
+    border: 0, borderRadius: "var(--dsw-radius-lg, 16px)",
+    boxShadow: "var(--dsw-elevation-prominent, 0 4px 12px rgba(0,0,0,0.15))",
+    padding: 0, width: "max-content", minWidth: "min(300px, calc(100vw - 24px))",
+    maxWidth: "min(440px, calc(100vw - 24px))", zIndex: 100001,
+    fontSize: 12, lineHeight: "18px",
     overflow: "hidden",
   } : null;
 
@@ -1112,27 +1076,27 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
       <span className="copilot-badge" title={badgeTitle} onClick={() => setOpen((v) => !v)}>
         <span dangerouslySetInnerHTML={{ __html: BADGE_COPILOT_SVG }} />
         <span>{t("badgeGlobalDefault")}</span>
-        <span className="copilot-badge-label" style={quota.high ? { color: "#e03131" } : undefined}>
+        <span className="copilot-badge-label" style={quota.high ? { color: "var(--dsw-alias-state-error-primary, #e03131)" } : undefined}>
           {usageLabel}
         </span>
       </span>
       {open && createPortal(
         <>
           <div style={{ position: "fixed", inset: 0, zIndex: 100000 }} onClick={() => setOpen(false)} />
-          <div style={popupStyle}>
+          <div role="dialog" aria-label={t("nav")} style={popupStyle}>
             {/* 标题栏：Plan 名称 + 设置按钮 */}
             <div style={{
               display: "flex", alignItems: "center", justifyContent: "space-between",
-              padding: "8px 12px", borderBottom: "1px solid rgba(128,128,128,0.15)",
+              padding: "8px 16px", borderBottom: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.15))",
             }}>
-              <span style={{ fontSize: 13, fontWeight: 600 }}>
+              <span style={{ fontSize: 12, fontWeight: 500, color: "var(--dsw-alias-label-primary, inherit)" }}>
                 {whoami.plan ?? "Copilot"}
               </span>
               <button type="button" title={t("nav")}
                 style={{
                   border: "none", background: "transparent", cursor: "pointer",
                   padding: 4, borderRadius: 4,
-                  color: "var(--dsh-fg, currentColor)", opacity: 0.65,
+                  color: "var(--dsw-alias-label-secondary, currentColor)", opacity: 0.65,
                   display: "inline-flex", alignItems: "center", lineHeight: 0,
                 }}
                 onClick={(e) => {
@@ -1148,18 +1112,18 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
               </button>
             </div>
             {/* 用量区 */}
-            <div style={{ padding: "10px 12px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6, opacity: 0.7 }}>
-                  <span>{t("badgeUsage")}</span>
+            <div style={{ padding: "10px 16px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 6 }}>
+                  <span style={{ color: "var(--dsw-alias-label-tertiary, inherit)" }}>{t("badgeUsage")}</span>
                   {whoami.usageResetDate && <span>{t("badgeResets")} {whoami.usageResetDate}</span>}
                 </div>
                 <div style={{ display: "flex", alignItems: "baseline", gap: 4, marginBottom: 6 }}>
                   <span style={{ fontSize: 20, fontWeight: 700 }}>{usageLabel}</span>
                 </div>
-                {quota.kind === "percent" && <div role="img" aria-label={usageLabel} style={{ height: 4, background: "rgba(128,128,128,0.2)", borderRadius: 2, overflow: "hidden" }}>
+                {quota.kind === "percent" && <div role="img" aria-label={usageLabel} style={{ height: 4, background: "var(--dsw-alias-border-l2, rgba(128,128,128,0.2))", borderRadius: 2, overflow: "hidden" }}>
                   <div style={{
                     height: "100%", width: `${quota.fill}%`,
-                    background: quota.high ? "#e03131" : "#4c6ef5",
+                    background: quota.high ? "var(--dsw-alias-state-error-primary, #e03131)" : "var(--dsw-alias-state-business-primary, #4c6ef5)",
                     borderRadius: 2,
                   }} />
                 </div>}
@@ -1168,13 +1132,13 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
                 排版与下方账号切换列表行一致（18px 圆头像、13px 文字、gap 8）。 */}
             <div style={{
               display: "flex", alignItems: "center", gap: 8,
-              padding: "8px 12px",
+              padding: "8px 16px",
               borderTop: whoami.usagePercent !== null && whoami.usagePercent !== undefined
-                ? "none" : "1px solid rgba(128,128,128,0.15)",
+                ? "none" : "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.15))",
             }}>
               <AccountAvatar id={whoami.id} url={whoami.avatarUrl} login={whoami.login} size={18} onRecovered={refresh} />
               <span style={{
-                fontSize: 13, flex: "1 1 auto", minWidth: 0, overflow: "hidden",
+                fontSize: 12, flex: "1 1 auto", minWidth: 0, overflow: "hidden",
                 textOverflow: "ellipsis", whiteSpace: "nowrap",
               }}>
                 {whoami.login ?? "—"}
@@ -1182,7 +1146,7 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
             </div>
             {/* 账号切换区 */}
             {accounts && accounts.length > 1 && (
-              <div style={{ borderTop: "1px solid rgba(128,128,128,0.15)", padding: "4px 0" }}>
+              <div style={{ borderTop: "0.5px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.15))", padding: "4px 0" }}>
                 {accounts.map((acc) => {
                   const active = acc.active;
                   const label = `${acc.domain}/${acc.login ?? acc.name ?? t("legacyAccount")}`;
@@ -1190,10 +1154,10 @@ function CopilotBadge({ t = (k) => DICTS.en[k] ?? k }) {
                     <button key={acc.id} type="button"
                       style={{
                         display: "flex", alignItems: "center", gap: 8, width: "100%",
-                        padding: "6px 12px", border: "none",
-                        background: active ? "rgba(76,109,245,0.08)" : "transparent",
+                        padding: "6px 16px", border: "none",
+                        background: active ? "var(--dsw-alias-interactive-bg-hover, rgba(76,109,245,0.08))" : "transparent",
                         cursor: active ? "default" : "pointer", fontFamily: "inherit",
-                        fontSize: 13, textAlign: "left", color: "inherit",
+                        fontSize: 12, textAlign: "left", color: "inherit",
                       }}
                       disabled={active || switching !== null}
                       onClick={() => switchAccount(acc.id)}
