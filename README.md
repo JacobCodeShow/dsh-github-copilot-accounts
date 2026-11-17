@@ -51,7 +51,7 @@
 
 ## 安装和更新
 
-当前准备的候选版本为 `0.3.6-dsh-0.2.2-rc.3`，不代表已经 npm 发布。发布前用 DSH 插件管理器安装本地 `.tgz` 验收；发布成功后可从 GitHub Release 的 Assets 下载同名 `.tgz`，或在包安装入口显式指定 `dsh-github-copilot-accounts@next`。安装、更新、移除后完整退出并重启 DSH。
+当前准备的候选版本为 `0.3.7-dsh-0.2.2-rc.3`，不代表已经 npm 发布。发布前用 DSH 插件管理器安装本地 `.tgz` 验收；发布成功后可从 GitHub Release 的 Assets 下载同名 `.tgz`，或在包安装入口显式指定 `dsh-github-copilot-accounts@next`。安装、更新、移除后完整退出并重启 DSH。
 
 GitHub 自动提供的 Source code `.zip` / `.tar.gz` 是源码归档，不等同于包含客户端构建产物的 npm 安装包。Assets 中的 `.tgz.sha256` 用于验证 `.tgz` 的 SHA-256。`next` 不保证被所有 DSH 市场源隔离；正式安装前检查实际版本与宿主要求。
 
@@ -165,10 +165,12 @@ npm pack --dry-run
 
 维护者在真实 `.tgz` 安装验收后，另行批准把同一完整版本提升为 npm `latest` 和 GitHub 正式 Release；工作流不会自动执行这一步。旧版不识别新增 Session 账号路由，切换 dist-tag 不等于已安装实例或会话数据自动回退。
 
-本候选版说明见 [Release notes](docs/releases/0.3.6-dsh-0.2.2-rc.3.md)，完整步骤见 [发布方案](docs/plans/2026-11-17-release-implementation-plan.md)。
+本候选版说明见 [Release notes](docs/releases/0.3.7-dsh-0.2.2-rc.3.md)。原 `0.3.6` 候选在 npm 12 打包校验阶段失败，未进入 npm 发布；本版包含已合并的元数据兼容修复，CI 与发布固定使用 npm `12.2.2` 并校验真实 tarball。旧 tag 不会移动，新的候选需使用新版本和新 tag。
+
+原发布流程和回退策略见 [发布方案](docs/plans/2026-11-17-release-implementation-plan.md)；其中 `0.3.6` 是历史候选，当前发版不得直接复用其 tag 命令。
 
 ## 版本号规则
 
-版本采用 `<插件核心版本>-dsh-<最近一次验证所基于的 DSH 版本>`，例如 `0.3.6-dsh-0.2.2-rc.3`。`-dsh-` 后缀只表示验证基准，不代表最低支持版本；实际安装兼容范围由 `package.json` 的 `engines.dsh` 声明。当前候选尚未对外发布，tag 应使用 `v0.3.6-dsh-0.2.2-rc.3`；名称含预发布后缀，默认安装渠道由 `next` / `latest` 决定。
+版本采用 `<插件核心版本>-dsh-<最近一次验证所基于的 DSH 版本>`，例如 `0.3.7-dsh-0.2.2-rc.3`。`-dsh-` 后缀只表示验证基准，不代表最低支持版本；实际安装兼容范围由 `package.json` 的 `engines.dsh` 声明。当前候选尚未对外发布，tag 应使用 `v0.3.7-dsh-0.2.2-rc.3`；名称含预发布后缀，默认安装渠道由 `next` / `latest` 决定。
 
 MIT

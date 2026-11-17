@@ -1,6 +1,6 @@
 {
   "name": "dsh-github-copilot-accounts",
-  "version": "0.3.6-dsh-0.2.2-rc.3",
+  "version": "0.3.7-dsh-0.2.2-rc.3",
   "description": "GitHub Copilot 多账号与会话绑定：设备码登录、全局默认与会话账号隔离、额度展示及续接状态保护。",
   "type": "module",
   "license": "MIT",
