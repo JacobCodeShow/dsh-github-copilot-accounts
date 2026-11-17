@@ -51,7 +51,7 @@
 
 ## 安装和更新
 
-当前准备的候选版本为 `0.3.7-dsh-0.2.2-rc.3`，不代表已经 npm 发布。发布前用 DSH 插件管理器安装本地 `.tgz` 验收；发布成功后可从 GitHub Release 的 Assets 下载同名 `.tgz`，或在包安装入口显式指定 `dsh-github-copilot-accounts@next`。安装、更新、移除后完整退出并重启 DSH。
+当前候选版本为 `0.3.8-dsh-0.2.2-rc.3`，不代表已经对外发布。发布前用 DSH 插件管理器安装本地 `.tgz` 验收；GitHub 预发布成功后，从该 Release 的 Assets 下载 `.tgz` 即可导入更新，不依赖 npm 登录或发布授权。仅在可选 npm 发布成功后，才可在包安装入口显式指定 `dsh-github-copilot-accounts@next`。安装、更新、移除后完整退出并重启 DSH。
 
 GitHub 自动提供的 Source code `.zip` / `.tar.gz` 是源码归档，不等同于包含客户端构建产物的 npm 安装包。Assets 中的 `.tgz.sha256` 用于验证 `.tgz` 的 SHA-256。`next` 不保证被所有 DSH 市场源隔离；正式安装前检查实际版本与宿主要求。
 
@@ -159,18 +159,20 @@ npm pack --dry-run
 
 ## 发布
 
-版本后缀标记 DSH 接口目标，不代表真实 GHE 验收或已发布 npm 版本。发布采用 GitHub Actions Trusted Publishing；只有推送与清单一致、且提交属于 `master` 的 `v*` tag 才会发包。工作流构建测试后只打包一次，发布该 `.tgz` 到 npm `next`，核对已发布内容，再创建非 Latest 的 GitHub prerelease，并将同一 `.tgz` 和 `.tgz.sha256` 上传为 Assets。
+版本后缀标记 DSH 接口目标，不代表真实 GHE 验收或已发布 npm 版本。只有推送与清单一致、且提交属于 `master` 的 `v*` tag 才会触发发布。`github-release` 任务构建测试后只打包一次，校验文件和哈希，再创建非 Latest 的 GitHub prerelease，将 `.tgz` 和 `.tgz.sha256` 上传为 Assets。它不查询 npm 发布状态，也不需要 npm Trusted Publisher 授权。
 
-失败重试复用原 tag；已存在的 npm 包和 GitHub 附件必须与本次产物一致，不覆盖不同内容，不重新设置已经提升的渠道。附件全部核验成功前，GitHub Release 保持草稿。npm 查询的网络或认证错误会中止流程，不当作版本未发布。
+**npm 发布默认关闭。** 在仓库 Settings → Secrets and variables → Actions → Variables 中将 `NPM_PUBLISH_ENABLED` 设为字符串 `true` 后，独立 `npm` 任务才会运行。它在 GitHub 发布成功后下载同一运行保存的 tarball 和元数据，重新校验但不重新打包，再通过 OIDC 发布到 `next`。启用 npm 时仍须正确配置 Trusted Publisher；npm 查询、授权或发布失败会明确显示为失败，但不会删除或阻止已经完成的 GitHub 安装包发布。
 
-维护者在真实 `.tgz` 安装验收后，另行批准把同一完整版本提升为 npm `latest` 和 GitHub 正式 Release；工作流不会自动执行这一步。旧版不识别新增 Session 账号路由，切换 dist-tag 不等于已安装实例或会话数据自动回退。
+失败重试复用原 tag 和提交；修改工作流不会改变旧 tag 对应的运行。已存在的 GitHub 附件或 npm 包必须与本次产物一致，不覆盖不同内容，不重新设置已经提升的渠道。附件全部下载核验成功前，GitHub Release 保持草稿。npm 网络或认证错误不当作版本未发布，也不通过关闭认证或添加长期 token 绕过。
 
-本候选版说明见 [Release notes](docs/releases/0.3.7-dsh-0.2.2-rc.3.md)。原 `0.3.6` 候选在 npm 12 打包校验阶段失败，未进入 npm 发布；本版包含已合并的元数据兼容修复，CI 与发布固定使用 npm `12.2.2` 并校验真实 tarball。旧 tag 不会移动，新的候选需使用新版本和新 tag。
+维护者在真实 `.tgz` 安装验收后，可另行批准将 GitHub 预发布转为正式 Release；只有 npm 已成功发布且获得另行批准时才提升 npm `latest`。两者互相独立，工作流不自动提升。旧版不识别新增 Session 账号路由，切换 dist-tag 不等于已安装实例或会话数据自动回退。
+
+本候选版说明见 [Release notes](docs/releases/0.3.8-dsh-0.2.2-rc.3.md)。原 `0.3.6` 候选在 npm 12 打包校验阶段失败，`0.3.7` 在 npm 发布授权阶段失败；本版将 GitHub 安装包从 npm 发布授权中独立出来。CI 与发布固定使用 npm `12.2.2` 并校验真实 tarball；旧 tag 不会移动，新的候选需使用新版本和新 tag。
 
 原发布流程和回退策略见 [发布方案](docs/plans/2026-11-17-release-implementation-plan.md)；其中 `0.3.6` 是历史候选，当前发版不得直接复用其 tag 命令。
 
 ## 版本号规则
 
-版本采用 `<插件核心版本>-dsh-<最近一次验证所基于的 DSH 版本>`，例如 `0.3.7-dsh-0.2.2-rc.3`。`-dsh-` 后缀只表示验证基准，不代表最低支持版本；实际安装兼容范围由 `package.json` 的 `engines.dsh` 声明。当前候选尚未对外发布，tag 应使用 `v0.3.7-dsh-0.2.2-rc.3`；名称含预发布后缀，默认安装渠道由 `next` / `latest` 决定。
+版本采用 `<插件核心版本>-dsh-<最近一次验证所基于的 DSH 版本>`，例如 `0.3.8-dsh-0.2.2-rc.3`。`-dsh-` 后缀只表示验证基准，不代表最低支持版本；实际安装兼容范围由 `package.json` 的 `engines.dsh` 声明。当前候选尚未对外发布，tag 应使用 `v0.3.8-dsh-0.2.2-rc.3`；名称含预发布后缀，npm 默认安装渠道由 `next` / `latest` 决定，与 GitHub Release 状态独立。
 
 MIT
