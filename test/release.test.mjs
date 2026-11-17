@@ -39,6 +39,17 @@ test("release package has one verified tarball containing exactly the public pac
   assert.match(artifact.integrity, /^sha512-/);
 });
 
+test("npm 12 package-name keyed pack JSON retains the same strict artifact checks", () => {
+  const keyed = () => ({ [pkg.name]: metadata()[0] });
+  assert.deepEqual(validatePackedArtifact(pkg, keyed(), bytes, hosts), validatePackedArtifact(pkg, metadata(), bytes, hosts));
+  for (const invalid of [null, undefined, "pack.json", 1, {}, { other: metadata()[0] }, { [pkg.name]: null }, { [pkg.name]: metadata() }, { [pkg.name]: metadata()[0], other: metadata()[0] }]) {
+    assert.throws(() => validatePackedArtifact(pkg, invalid, bytes, hosts));
+  }
+  const leaked = keyed(); leaked[pkg.name].files.push({ path: ".credentials.yaml" });
+  assert.throws(() => validatePackedArtifact(pkg, leaked, bytes, hosts));
+  assert.throws(() => validatePackedArtifact(pkg, keyed(), Buffer.from("different bytes"), hosts));
+});
+
 test("release package rejects missing Host imports and leaked development or local files", () => {
   for (const removed of files) {
     const rows = metadata(); rows[0].files = rows[0].files.filter(file => file.path !== removed);
@@ -219,7 +230,19 @@ test("the workflow only publishes version tags to next and attaches the same ver
   assert.equal(publish.env.TARBALL, "${{ steps.artifact.outputs.filename }}");
 });
 
-test("workflow outputs and checksum files are written only after release validation", async () => {
+test("CI validates a real tarball with the same pinned npm used for publication", () => {
+  const release = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"));
+  const ci = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
+  const releaseRuns = release.jobs.publish.steps.map(step => step.run ?? "").join("\n");
+  const ciRuns = ci.jobs["build-test"].steps.map(step => step.run ?? "").join("\n");
+  const npmVersion = releaseRuns.match(/npm install --global npm@(\d+\.\d+\.\d+)/)?.[1];
+  assert.equal(npmVersion, "12.2.2");
+  assert.ok(ciRuns.includes(`npm install --global npm@${npmVersion}`));
+  assert.ok(ciRuns.includes('npm pack --json --ignore-scripts > "$RUNNER_TEMP/copilot-pack.json"'));
+  assert.ok(ciRuns.includes('node scripts/release.mjs artifact "$RUNNER_TEMP/copilot-pack.json"'));
+});
+
+for (const format of ["legacy-array", "npm12-package-map"]) test(`${format}: workflow outputs and checksum files are written only after release validation`, async () => {
   const root = mkdtempSync(join(tmpdir(), "copilot-release-test-"));
   try {
     writeFileSync(join(root, "package.json"), JSON.stringify(pkg));
@@ -231,7 +254,7 @@ test("workflow outputs and checksum files are written only after release validat
     for (const host of hosts) writeFileSync(join(root, host), "");
     writeFileSync(join(root, filename), bytes);
     const packPath = join(root, "pack.json");
-    writeFileSync(packPath, JSON.stringify(metadata()));
+    writeFileSync(packPath, JSON.stringify(format === "legacy-array" ? metadata() : { [pkg.name]: metadata()[0] }));
     await runReleaseCommand("artifact", packPath, { root, env: { GITHUB_REF_NAME: tag, GITHUB_OUTPUT: output } });
     assert.equal(readFileSync(join(root, `${filename}.sha256`), "utf8"), `${artifactHashes(bytes).sha256}  ${filename}\n`);
     assert.ok(readFileSync(output, "utf8").includes(`filename=${filename}\nintegrity=${artifactHashes(bytes).integrity}\n`));

@@ -8,7 +8,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: npm install --global npm@12.2.2
       # cordis 是运行时由 DSH 宿主提供的 peer，构建/测试不需要安装
       - run: npm ci --legacy-peer-deps
       - run: npm run build
       - run: npm test
+      - name: Verify the real release tarball with the publishing npm version
+        run: |
+          npm pack --json --ignore-scripts > "$RUNNER_TEMP/copilot-pack.json"
+          GITHUB_REF_NAME="v$(node -p "require('./package.json').version")" node scripts/release.mjs artifact "$RUNNER_TEMP/copilot-pack.json"
