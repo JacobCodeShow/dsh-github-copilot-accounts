@@ -59,6 +59,20 @@ test("single-account settings hide combined total", async () => {
   const all = nodes(render(s.CopilotSection({ t })));
   assert.equal(all.filter(node => Object.hasOwn(node.props, "data-combined-usage")).length, 0);
 });
+test("account settings use live theme tokens for cards, usage markers and controls", async () => {
+  const s = await subject([account("a", 25)]), t = key => s.DICTS.en[key] ?? key;
+  const tree = render(s.CopilotSection({ t })), all = nodes(tree);
+  assert.equal(tree.props.style.color, "var(--dsw-alias-label-primary, inherit)");
+  const card = all.find(node => node.props?.style?.padding === "12px 14px");
+  assert.equal(card.props.style.background, "var(--dsw-alias-settings-card-fill, var(--dsw-alias-bg-layer-2, transparent))");
+  assert.ok(card.props.style.border.includes("--dsw-alias-settings-card-stroke"));
+  const used = all.find(node => Object.hasOwn(node.props, "data-usage-marker"));
+  const month = all.find(node => Object.hasOwn(node.props, "data-month-marker"));
+  assert.equal(used.props.style.background, "var(--dsw-alias-state-business-primary, #4c6ef5)");
+  assert.equal(month.props.style.background, "var(--dsw-alias-state-warn-primary, #d9a441)");
+  const add = all.find(node => node.type === "button" && text(node).includes(t("addAccount")));
+  assert.ok(add.props.style.border.includes("--dsw-alias-border-l4"));
+});
 test("settings registers its icon using matching public slot id and owns its locale", async () => {
   const s = await subject([]), registrations = [], effects = [];
   const locale = new Map();
